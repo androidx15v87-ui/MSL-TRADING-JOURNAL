@@ -1,0 +1,448 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Reusable Hardened Helpers ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function hasWorkspace(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId))
+        && get(/databases/$(database)/documents/users/$(userId)).data.uid == request.auth.uid;
+    }
+
+    function isBoundedString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isValidStringList(val, maxItems, maxItemLen) {
+      return val is list
+        && val.size() <= maxItems
+        && (val.size() == 0 || (val[0] is string && val[0].size() >= 1 && val[0].size() <= maxItemLen));
+    }
+
+    // --- Entity Validation Blueprints ---
+    function isValidWorkspace(data, userId) {
+      return data.keys().hasAll([
+          'uid',
+          'displayName',
+          'defaultMarket',
+          'playbookCore',
+          'playbookRev',
+          'playbookCont',
+          'playbookEntry',
+          'playbookRisk',
+          'quoteFrequency',
+          'quoteNotifications',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'displayName',
+          'defaultMarket',
+          'playbookCore',
+          'playbookRev',
+          'playbookCont',
+          'playbookEntry',
+          'playbookRisk',
+          'quoteFrequency',
+          'quoteNotifications',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && isBoundedString(data.displayName, 0, 80)
+        && isBoundedString(data.defaultMarket, 0, 80)
+        && isBoundedString(data.playbookCore, 0, 8000)
+        && isBoundedString(data.playbookRev, 0, 8000)
+        && isBoundedString(data.playbookCont, 0, 8000)
+        && isBoundedString(data.playbookEntry, 0, 8000)
+        && isBoundedString(data.playbookRisk, 0, 8000)
+        && data.quoteFrequency is number
+        && data.quoteFrequency in [0, 30, 60, 120, 240]
+        && data.quoteNotifications is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTrade(data, userId, tradeId) {
+      return data.keys().hasAll([
+          'id',
+          'userId',
+          'date',
+          'pair',
+          'direction',
+          'setup',
+          'session',
+          'result',
+          'r',
+          'risk',
+          'model',
+          'tags',
+          'notes',
+          'custom',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'userId',
+          'date',
+          'pair',
+          'direction',
+          'setup',
+          'session',
+          'result',
+          'r',
+          'risk',
+          'model',
+          'tags',
+          'notes',
+          'custom',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == tradeId
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && data.userId == userId
+        && isBoundedString(data.date, 10, 32)
+        && data.date.matches('^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}.*$')
+        && isBoundedString(data.pair, 1, 32)
+        && data.direction is string
+        && data.direction in ['Long', 'Short']
+        && data.setup is string
+        && data.setup in ['Reversal', 'Continuation', 'Breakout', 'Other']
+        && data.session is string
+        && data.session in ['London', 'New York', 'Asia', 'Overlap', 'Other']
+        && data.result is string
+        && data.result in ['Win', 'Loss', 'BE']
+        && data.r is number
+        && data.r >= -1000
+        && data.r <= 1000
+        && data.risk is number
+        && data.risk >= 0
+        && data.risk <= 1000
+        && isBoundedString(data.model, 0, 120)
+        && isValidStringList(data.tags, 15, 40)
+        && isBoundedString(data.notes, 0, 10000)
+        && data.custom is map
+        && data.custom.keys().size() <= 40
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTradeImage(data, userId, imageId) {
+      return data.keys().hasAll(['id', 'userId', 'tradeId', 'name', 'dataUrl', 'createdAt'])
+        && data.keys().hasOnly(['id', 'userId', 'tradeId', 'name', 'dataUrl', 'createdAt'])
+        && isValidId(data.id)
+        && data.id == imageId
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && data.userId == userId
+        && isValidId(data.tradeId)
+        && isBoundedString(data.name, 1, 160)
+        && isBoundedString(data.dataUrl, 10, 750000)
+        && data.dataUrl.matches('^data:image\\/.*$')
+        && data.createdAt is timestamp;
+    }
+
+    function isValidTradingModel(data, userId, modelId) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'type', 'entry', 'risk', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'userId', 'name', 'type', 'entry', 'risk', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.id == modelId
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && data.userId == userId
+        && isBoundedString(data.name, 1, 120)
+        && data.type is string
+        && data.type in ['Reversal', 'Continuation', 'Both']
+        && isBoundedString(data.entry, 0, 4000)
+        && isBoundedString(data.risk, 0, 4000)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCustomField(data, userId, fieldId) {
+      return data.keys().hasAll([
+          'id',
+          'userId',
+          'name',
+          'type',
+          'required',
+          'hint',
+          'options',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'userId',
+          'name',
+          'type',
+          'required',
+          'hint',
+          'options',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == fieldId
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && data.userId == userId
+        && isBoundedString(data.name, 1, 80)
+        && data.type is string
+        && data.type in ['text', 'number', 'both']
+        && data.required is bool
+        && isBoundedString(data.hint, 0, 200)
+        && isValidStringList(data.options, 30, 80)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSessionAlarm(data, userId, alarmId) {
+      return data.keys().hasAll([
+          'id',
+          'userId',
+          'name',
+          'time',
+          'enabled',
+          'sortOrder',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'userId',
+          'name',
+          'time',
+          'enabled',
+          'sortOrder',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == alarmId
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && data.userId == userId
+        && isBoundedString(data.name, 1, 60)
+        && isBoundedString(data.time, 5, 5)
+        && data.time.matches('^([01]\\d|2[0-3]):[0-5]\\d$')
+        && data.enabled is bool
+        && data.sortOrder is number
+        && data.sortOrder >= 0
+        && data.sortOrder <= 20
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId) && (resource == null || existing().uid == request.auth.uid);
+      allow list: if false;
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidWorkspace(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && isValidWorkspace(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'defaultMarket', 'updatedAt'])
+          || incoming().diff(existing()).affectedKeys().hasOnly([
+            'playbookCore',
+            'playbookRev',
+            'playbookCont',
+            'playbookEntry',
+            'playbookRisk',
+            'updatedAt'
+          ])
+          || incoming().diff(existing()).affectedKeys().hasOnly([
+            'quoteFrequency',
+            'quoteNotifications',
+            'updatedAt'
+          ])
+          || incoming().diff(existing()).affectedKeys().hasOnly([
+            'displayName',
+            'defaultMarket',
+            'playbookCore',
+            'playbookRev',
+            'playbookCont',
+            'playbookEntry',
+            'playbookRisk',
+            'quoteFrequency',
+            'quoteNotifications',
+            'updatedAt'
+          ])
+        );
+      allow delete: if isOwner(userId) && isValidId(userId) && existing().uid == request.auth.uid;
+
+      match /trades/{tradeId} {
+        allow get: if isOwner(userId) && isValidId(tradeId) && hasWorkspace(userId) && (resource == null || existing().userId == request.auth.uid);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(tradeId)
+          && isValidTrade(incoming(), userId, tradeId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasWorkspace(userId);
+        allow update: if isOwner(userId)
+          && isValidId(tradeId)
+          && isValidTrade(incoming(), userId, tradeId)
+          && hasWorkspace(userId)
+          && existing().userId == request.auth.uid
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'date',
+            'pair',
+            'direction',
+            'setup',
+            'session',
+            'result',
+            'r',
+            'risk',
+            'model',
+            'tags',
+            'notes',
+            'custom',
+            'updatedAt'
+          ]);
+        allow delete: if isOwner(userId) && isValidId(tradeId) && hasWorkspace(userId) && existing().userId == request.auth.uid;
+      }
+
+      match /tradeImages/{imageId} {
+        allow get: if isOwner(userId) && isValidId(imageId) && hasWorkspace(userId) && (resource == null || existing().userId == request.auth.uid);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(imageId)
+          && isValidTradeImage(incoming(), userId, imageId)
+          && incoming().createdAt == request.time
+          && hasWorkspace(userId)
+          && existsAfter(/databases/$(database)/documents/users/$(userId)/trades/$(incoming().tradeId))
+          && getAfter(/databases/$(database)/documents/users/$(userId)/trades/$(incoming().tradeId)).data.userId == request.auth.uid;
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(imageId) && hasWorkspace(userId) && existing().userId == request.auth.uid;
+      }
+
+      match /models/{modelId} {
+        allow get: if isOwner(userId) && isValidId(modelId) && hasWorkspace(userId) && (resource == null || existing().userId == request.auth.uid);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(modelId)
+          && isValidTradingModel(incoming(), userId, modelId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasWorkspace(userId);
+        allow update: if isOwner(userId)
+          && isValidId(modelId)
+          && isValidTradingModel(incoming(), userId, modelId)
+          && hasWorkspace(userId)
+          && existing().userId == request.auth.uid
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name',
+            'type',
+            'entry',
+            'risk',
+            'updatedAt'
+          ]);
+        allow delete: if isOwner(userId) && isValidId(modelId) && hasWorkspace(userId) && existing().userId == request.auth.uid;
+      }
+
+      match /customFields/{fieldId} {
+        allow get: if isOwner(userId) && isValidId(fieldId) && hasWorkspace(userId) && (resource == null || existing().userId == request.auth.uid);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(fieldId)
+          && isValidCustomField(incoming(), userId, fieldId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasWorkspace(userId);
+        allow update: if isOwner(userId)
+          && isValidId(fieldId)
+          && isValidCustomField(incoming(), userId, fieldId)
+          && hasWorkspace(userId)
+          && existing().userId == request.auth.uid
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name',
+            'type',
+            'required',
+            'hint',
+            'options',
+            'updatedAt'
+          ]);
+        allow delete: if isOwner(userId) && isValidId(fieldId) && hasWorkspace(userId) && existing().userId == request.auth.uid;
+      }
+
+      match /alarms/{alarmId} {
+        allow get: if isOwner(userId) && isValidId(alarmId) && hasWorkspace(userId) && (resource == null || existing().userId == request.auth.uid);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(alarmId)
+          && isValidSessionAlarm(incoming(), userId, alarmId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasWorkspace(userId);
+        allow update: if isOwner(userId)
+          && isValidId(alarmId)
+          && isValidSessionAlarm(incoming(), userId, alarmId)
+          && hasWorkspace(userId)
+          && existing().userId == request.auth.uid
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name',
+            'time',
+            'enabled',
+            'sortOrder',
+            'updatedAt'
+          ]);
+        allow delete: if isOwner(userId) && isValidId(alarmId) && hasWorkspace(userId) && existing().userId == request.auth.uid;
+      }
+    }
+  }
+}

@@ -1,8 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import {
   Bell,
+  Cloud,
+  CloudOff,
   Download,
   Lock,
+  LogIn,
+  LogOut,
+  RefreshCw,
   Save,
   ShieldCheck,
   Trash2,
@@ -10,6 +15,7 @@ import {
 } from 'lucide-react';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { PWAInstallButton } from '../components/PWAInstallButton';
+import { useFirebase } from '../context/FirebaseContext';
 import {
   checkPersistentStorage,
   parseBackupFile,
@@ -38,6 +44,9 @@ interface SettingsScreenProps {
   onDownloadBackup: () => void;
   onRestoreBackup: (restored: JournalState) => Promise<void> | void;
   onClearAllData: () => Promise<void> | void;
+  onSignIn: () => Promise<void> | void;
+  onSignOut: () => Promise<void> | void;
+  onForceSyncToCloud: () => Promise<void> | void;
   onToast: (msg: string) => void;
 }
 
@@ -50,8 +59,12 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onDownloadBackup,
   onRestoreBackup,
   onClearAllData,
+  onSignIn,
+  onSignOut,
+  onForceSyncToCloud,
   onToast,
 }) => {
+  const { user, authBusy, cloudStatus, cloudError } = useFirebase();
   const [alarmDraft, setAlarmDraft] = useState<SessionAlarm[]>(alarms);
   const [quoteFreq, setQuoteFreq] = useState<number>(settings.quoteFrequency);
   const [quoteNotifs, setQuoteNotifs] = useState<boolean>(settings.quoteNotifications);
@@ -66,6 +79,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     supported: true,
     persisted: false,
   });
+  const [syncingNow, setSyncingNow] = useState(false);
 
   const [pendingRestore, setPendingRestore] = useState<JournalState | null>(null);
   const [clearStep, setClearStep] = useState<0 | 1 | 2>(0);
@@ -100,7 +114,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     onToast(
       synced
         ? 'Session times saved and synced to Android native alarms.'
-        : 'Session times saved to this device.'
+        : 'Session times saved.'
     );
   };
 
@@ -165,6 +179,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     });
   };
 
+  const handleForceSync = async () => {
+    setSyncingNow(true);
+    try {
+      await onForceSyncToCloud();
+    } finally {
+      setSyncingNow(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div>
@@ -173,9 +196,120 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </p>
         <h2 className="mt-0.5 font-display text-2xl font-extrabold text-[#eef3fb]">Settings</h2>
         <p className="mt-1 text-sm text-[#8b9ab0]">
-          Configure local session alarms, quote discipline reminders, backups, and device storage.
+          Connect Google cloud sync, configure local session alarms, discipline reminders, and backups.
         </p>
       </div>
+
+      {/* Cloud Account & Firestore Sync */}
+      <article className="rounded-2xl glass-card p-5 space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b border-white/[0.08]">
+          <div>
+            <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+              Account & Cloud Database
+            </p>
+            <h3 className="text-base font-bold text-[#eef3fb]">
+              {user ? 'Cloud Firestore sync active' : 'Connect Google Account & Cloud Database'}
+            </h3>
+          </div>
+          {user ? (
+            <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#47dca0]/15 border border-[#47dca0]/35 px-2.5 py-1 text-xs font-semibold text-[#8df0c0]">
+              {cloudStatus === 'connecting' ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Syncing…</span>
+                </>
+              ) : cloudStatus === 'error' ? (
+                <>
+                  <CloudOff className="w-3.5 h-3.5 text-[#ff7d91]" />
+                  <span className="text-[#ff7d91]">Error</span>
+                </>
+              ) : (
+                <>
+                  <Cloud className="w-3.5 h-3.5" />
+                  <span>Synced</span>
+                </>
+              )}
+            </span>
+          ) : (
+            <Cloud className="w-5 h-5 text-[#8ebeff]" />
+          )}
+        </div>
+
+        {cloudError && (
+          <div className="rounded-xl border border-[#ff7d91]/35 bg-[#ff7d91]/10 px-3.5 py-2.5 text-xs text-[#ffb4bf]">
+            {cloudError}
+          </div>
+        )}
+
+        {user ? (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl glass-subcard p-4">
+            <div className="flex items-center gap-3 min-w-0">
+              {user.photoURL ? (
+                <img
+                  src={user.photoURL}
+                  alt={user.displayName || 'Google profile'}
+                  referrerPolicy="no-referrer"
+                  className="h-11 w-11 rounded-xl object-cover border border-white/15 shrink-0"
+                />
+              ) : (
+                <div className="h-11 w-11 rounded-xl bg-[#47dca0]/20 border border-[#47dca0]/35 flex items-center justify-center font-display text-sm font-bold text-[#8df0c0] shrink-0">
+                  {(user.displayName || user.email || 'T').slice(0, 1).toUpperCase()}
+                </div>
+              )}
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-[#eef3fb] truncate">
+                  {user.displayName || 'Verified Trader'}
+                </p>
+                <p className="text-xs text-[#8b9ab0] truncate">{user.email}</p>
+                <p className="mt-0.5 text-[11px] text-[#8df0c0]">
+                  Private Cloud Firestore vault · Real-time multi-device sync
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleForceSync}
+                disabled={syncingNow || authBusy}
+                className="min-h-[42px] inline-flex items-center gap-1.5 rounded-xl bg-[#111c2d] border border-[#23344f] px-3.5 py-2 text-xs font-semibold text-[#eef3fb] hover:border-[#47dca0]/45 disabled:opacity-50 transition"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-[#8df0c0] ${syncingNow ? 'animate-spin' : ''}`} />
+                <span>{syncingNow ? 'Uploading…' : 'Push local to cloud'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={onSignOut}
+                disabled={authBusy}
+                className="min-h-[42px] inline-flex items-center gap-1.5 rounded-xl border border-[#ff7d91]/35 bg-[#ff7d91]/10 px-3.5 py-2 text-xs font-semibold text-[#ff7d91] hover:bg-[#ff7d91]/20 disabled:opacity-50 transition"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Sign out</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl glass-subcard p-4">
+            <div className="space-y-1">
+              <p className="text-sm font-bold text-[#eef3fb]">
+                Sync your journal privately across devices
+              </p>
+              <p className="text-xs text-[#8b9ab0] leading-relaxed">
+                Currently running offline-first on this device. Sign in with Google to back up and sync all trades, chart screenshots, models, custom properties, playbook, and alarms to your private Cloud Firestore database.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onSignIn}
+              disabled={authBusy}
+              className="min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#47dca0] px-5 py-2.5 text-sm font-bold text-[#051612] hover:bg-[#62e4b0] disabled:opacity-50 transition shrink-0 whitespace-nowrap"
+            >
+              <LogIn className="w-4 h-4" />
+              <span>{authBusy ? 'Signing in…' : 'Sign in with Google'}</span>
+            </button>
+          </div>
+        )}
+      </article>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Session Alarms & Quote Reminders */}
@@ -353,9 +487,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           </div>
 
           <div className="rounded-xl glass-subcard p-3.5 space-y-1">
-            <p className="text-sm font-bold text-[#eef3fb]">Local-first by design</p>
+            <p className="text-sm font-bold text-[#eef3fb]">Local-first + Private Cloud Vault</p>
             <p className="text-xs leading-relaxed text-[#8b9ab0]">
-              All trades, chart screenshots, models, custom properties, and playbook notes are stored in IndexedDB directly on this device. No account, login, or external server.
+              All trades, chart screenshots, models, custom properties, and playbook notes live offline-first in IndexedDB on this device, and sync privately to your personal Cloud Firestore workspace whenever you sign in with Google.
             </p>
           </div>
 

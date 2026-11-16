@@ -5,8 +5,24 @@ import { Layout } from './components/Layout';
 import { OfflineBanner } from './components/OfflineBanner';
 import { TradeDetailModal } from './components/TradeDetailModal';
 import { TradeModal } from './components/TradeModal';
+import { useFirebase } from './context/FirebaseContext';
 import { createDefaultState, QUOTES, type QuoteItem } from './data/quotes';
 import { formatR, getAllTradeTags, isoDate } from './lib/calculations';
+import {
+  cloudDeleteField,
+  cloudDeleteModel,
+  cloudDeleteTrade,
+  cloudReplaceFullJournal,
+  cloudSaveAlarmsAndSettings,
+  cloudSaveField,
+  cloudSaveModel,
+  cloudSavePlaybook,
+  cloudSaveProfile,
+  cloudSaveTrade,
+  ensureCloudWorkspace,
+  mergeMissingLocalTradesToCloud,
+  subscribeToCloudJournal,
+} from './lib/cloudSync';
 import {
   buildBackupPayload,
   clearAllJournalData,
@@ -16,6 +32,7 @@ import {
   saveKV,
   saveTradeRecord,
 } from './lib/db';
+import { formatCloudErrorMessage } from './lib/firebase';
 import { evaluateAlarmsAndQuotes, syncNativeAlarms } from './lib/notifications';
 import { AIScreen } from './screens/AIScreen';
 import { AnalyticsScreen } from './screens/AnalyticsScreen';
@@ -36,6 +53,8 @@ import type {
   TradingModel,
   UserProfile,
 } from './types/journal';
+
+const LAST_SYNCED_UID_KEY = 'msl_v10_last_uid';
 
 function randomQuote(exclude?: QuoteItem): QuoteItem {
   if (QUOTES.length <= 1) return QUOTES[0];
@@ -67,9 +86,21 @@ export default function App() {
     [state.trades]
   );
 
+  const {
+    user,
+    authReady,
+    setCloudStatus,
+    setCloudError,
+    signInWithGoogle,
+    signOutAccount,
+  } = useFirebase();
+
   const toastTimerRef = useRef<number | null>(null);
   const lastAlarmKeyRef = useRef<string>('');
   const splashStartRef = useRef<number>(Date.now());
+  const stateRef = useRef<JournalState>(state);
+  stateRef.current = state;
+  const mergedForSessionRef = useRef<string | null>(null);
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
@@ -98,6 +129,106 @@ export default function App() {
       active = false;
     };
   }, [showToast]);
+
+  // Attach real-time Cloud Firestore workspace & sync when authenticated + hydrated
+  useEffect(() => {
+    if (!hydrated || !authReady) return;
+    if (!user) {
+      mergedForSessionRef.current = null;
+      setCloudStatus('local');
+      setCloudError(null);
+      return;
+    }
+
+    let cancelled = false;
+    let unsub: (() => void) | null = null;
+    const preSyncSnapshot = stateRef.current;
+
+    const initCloud = async () => {
+      setCloudStatus('connecting');
+      setCloudError(null);
+      try {
+        const { isNewWorkspace } = await ensureCloudWorkspace(
+          user.uid,
+          preSyncSnapshot,
+          user.displayName
+        );
+        if (cancelled) return;
+
+        if (isNewWorkspace) {
+          try {
+            localStorage.setItem(LAST_SYNCED_UID_KEY, user.uid);
+          } catch {
+            // Ignore
+          }
+          mergedForSessionRef.current = user.uid;
+        }
+
+        unsub = subscribeToCloudJournal(
+          user.uid,
+          async (cloudState) => {
+            if (cancelled) return;
+
+            if (mergedForSessionRef.current !== user.uid) {
+              mergedForSessionRef.current = user.uid;
+              let lastUid: string | null = null;
+              try {
+                lastUid = localStorage.getItem(LAST_SYNCED_UID_KEY);
+              } catch {
+                lastUid = null;
+              }
+              if (lastUid !== user.uid && preSyncSnapshot.trades.length > 0) {
+                try {
+                  const mergedCount = await mergeMissingLocalTradesToCloud(
+                    user.uid,
+                    preSyncSnapshot,
+                    cloudState.trades
+                  );
+                  if (mergedCount > 0 && !cancelled) {
+                    showToast(`Merged ${mergedCount} local trade(s) into your cloud journal.`);
+                  }
+                } catch (mergeErr) {
+                  if (!cancelled) {
+                    showToast(formatCloudErrorMessage(mergeErr));
+                  }
+                }
+              }
+              try {
+                localStorage.setItem(LAST_SYNCED_UID_KEY, user.uid);
+              } catch {
+                // Ignore
+              }
+            }
+
+            setState(cloudState);
+            syncNativeAlarms(cloudState.alarms);
+            setCloudStatus('synced');
+            setCloudError(null);
+            void saveFullJournalState(cloudState).catch(() => {});
+          },
+          (err) => {
+            if (cancelled) return;
+            const msg = formatCloudErrorMessage(err);
+            setCloudStatus('error');
+            setCloudError(msg);
+          }
+        );
+      } catch (err) {
+        if (cancelled) return;
+        const msg = formatCloudErrorMessage(err);
+        setCloudStatus('error');
+        setCloudError(msg);
+        showToast(msg);
+      }
+    };
+
+    void initCloud();
+
+    return () => {
+      cancelled = true;
+      if (unsub) unsub();
+    };
+  }, [hydrated, authReady, user, setCloudStatus, setCloudError, showToast]);
 
   // App opening splash timer (3-second liquid-glass entrance animation)
   useEffect(() => {
@@ -179,7 +310,17 @@ export default function App() {
     setTradeModalOpen(false);
     setEditingTrade(null);
     setDraftTemplate(null);
-    showToast('Trade saved to device storage.');
+
+    if (user) {
+      try {
+        await cloudSaveTrade(user.uid, trade);
+        showToast('Trade saved & synced to cloud.');
+      } catch (err) {
+        showToast(formatCloudErrorMessage(err));
+      }
+    } else {
+      showToast('Trade saved to device storage.');
+    }
   };
 
   const handleConfirmDeleteTrade = async () => {
@@ -192,21 +333,51 @@ export default function App() {
     }));
     setTradeToDelete(null);
     setViewingTrade(null);
-    showToast('Trade deleted.');
+
+    if (user) {
+      try {
+        await cloudDeleteTrade(user.uid, id);
+        showToast('Trade deleted from device & cloud.');
+      } catch (err) {
+        showToast(formatCloudErrorMessage(err));
+      }
+    } else {
+      showToast('Trade deleted.');
+    }
   };
 
   const handleSaveModel = async (model: TradingModel) => {
     const nextModels = [model, ...state.models.filter((m) => m.id !== model.id)];
     await saveKV('models', nextModels);
     setState((prev) => ({ ...prev, models: nextModels }));
-    showToast('Model saved.');
+
+    if (user) {
+      try {
+        await cloudSaveModel(user.uid, model);
+        showToast('Model saved & synced.');
+      } catch (err) {
+        showToast(formatCloudErrorMessage(err));
+      }
+    } else {
+      showToast('Model saved.');
+    }
   };
 
   const handleDeleteModel = async (id: string) => {
     const nextModels = state.models.filter((m) => m.id !== id);
     await saveKV('models', nextModels);
     setState((prev) => ({ ...prev, models: nextModels }));
-    showToast('Model deleted.');
+
+    if (user) {
+      try {
+        await cloudDeleteModel(user.uid, id);
+        showToast('Model deleted.');
+      } catch (err) {
+        showToast(formatCloudErrorMessage(err));
+      }
+    } else {
+      showToast('Model deleted.');
+    }
   };
 
   const handleSaveField = async (field: CustomField) => {
@@ -216,20 +387,50 @@ export default function App() {
       : [...state.fields, field];
     await saveKV('fields', nextFields);
     setState((prev) => ({ ...prev, fields: nextFields }));
-    showToast('Custom property saved.');
+
+    if (user) {
+      try {
+        await cloudSaveField(user.uid, field);
+        showToast('Custom property saved & synced.');
+      } catch (err) {
+        showToast(formatCloudErrorMessage(err));
+      }
+    } else {
+      showToast('Custom property saved.');
+    }
   };
 
   const handleDeleteField = async (id: string) => {
     const nextFields = state.fields.filter((f) => f.id !== id);
     await saveKV('fields', nextFields);
     setState((prev) => ({ ...prev, fields: nextFields }));
-    showToast('Property removed from form. Existing trade values preserved.');
+
+    if (user) {
+      try {
+        await cloudDeleteField(user.uid, id);
+        showToast('Property removed from form. Existing trade values preserved.');
+      } catch (err) {
+        showToast(formatCloudErrorMessage(err));
+      }
+    } else {
+      showToast('Property removed from form. Existing trade values preserved.');
+    }
   };
 
   const handleSavePlaybook = async (playbook: Playbook) => {
     await saveKV('playbook', playbook);
     setState((prev) => ({ ...prev, playbook }));
-    showToast('Playbook saved.');
+
+    if (user) {
+      try {
+        await cloudSavePlaybook(user.uid, playbook);
+        showToast('Playbook saved & synced.');
+      } catch (err) {
+        showToast(formatCloudErrorMessage(err));
+      }
+    } else {
+      showToast('Playbook saved.');
+    }
   };
 
   const handleSaveAlarmsAndSettings = async (
@@ -238,12 +439,30 @@ export default function App() {
   ) => {
     await Promise.all([saveKV('alarms', alarms), saveKV('settings', settings)]);
     setState((prev) => ({ ...prev, alarms, settings }));
+
+    if (user) {
+      try {
+        await cloudSaveAlarmsAndSettings(user.uid, alarms, settings);
+      } catch (err) {
+        showToast(formatCloudErrorMessage(err));
+      }
+    }
   };
 
   const handleSaveProfile = async (profile: UserProfile) => {
     await saveKV('profile', profile);
     setState((prev) => ({ ...prev, profile }));
-    showToast('Preferences saved.');
+
+    if (user) {
+      try {
+        await cloudSaveProfile(user.uid, profile);
+        showToast('Preferences saved & synced.');
+      } catch (err) {
+        showToast(formatCloudErrorMessage(err));
+      }
+    } else {
+      showToast('Preferences saved.');
+    }
   };
 
   const handleDownloadBackup = () => {
@@ -295,14 +514,60 @@ export default function App() {
     await saveFullJournalState(restored);
     setState(restored);
     syncNativeAlarms(restored.alarms);
-    showToast(`Backup restored (${restored.trades.length} trades).`);
+
+    if (user) {
+      try {
+        await cloudReplaceFullJournal(user.uid, restored);
+        showToast(`Backup restored & synced (${restored.trades.length} trades).`);
+      } catch (err) {
+        showToast(formatCloudErrorMessage(err));
+      }
+    } else {
+      showToast(`Backup restored (${restored.trades.length} trades).`);
+    }
   };
 
   const handleClearAllData = async () => {
     const fresh = await clearAllJournalData();
     setState(fresh);
     syncNativeAlarms(fresh.alarms);
-    showToast('All local journal data cleared.');
+
+    if (user) {
+      try {
+        await cloudReplaceFullJournal(user.uid, fresh);
+        showToast('All local and cloud journal data cleared.');
+      } catch (err) {
+        showToast(formatCloudErrorMessage(err));
+      }
+    } else {
+      showToast('All local journal data cleared.');
+    }
+  };
+
+  const handleSignIn = async () => {
+    try {
+      const signedInUser = await signInWithGoogle();
+      if (signedInUser) {
+        showToast(`Signed in as ${signedInUser.displayName || signedInUser.email}.`);
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Google sign-in failed.');
+    }
+  };
+
+  const handleSignOut = async () => {
+    await signOutAccount();
+    showToast('Signed out. Local device journal remains intact.');
+  };
+
+  const handleForceSyncToCloud = async () => {
+    if (!user) return;
+    try {
+      await cloudReplaceFullJournal(user.uid, stateRef.current);
+      showToast('Full journal pushed to Cloud Firestore.');
+    } catch (err) {
+      showToast(formatCloudErrorMessage(err));
+    }
   };
 
   const handleCycleQuote = () => {
@@ -385,6 +650,8 @@ export default function App() {
           onNavigate={setActivePage}
           onOpenTradeModal={() => handleOpenNewTrade()}
           onCycleQuote={handleCycleQuote}
+          onSignIn={handleSignIn}
+          onSignOut={handleSignOut}
           displayName={state.profile.name}
         >
           {!hydrated ? (
@@ -474,6 +741,9 @@ export default function App() {
                     onDownloadBackup={handleDownloadBackup}
                     onRestoreBackup={handleRestoreBackup}
                     onClearAllData={handleClearAllData}
+                    onSignIn={handleSignIn}
+                    onSignOut={handleSignOut}
+                    onForceSyncToCloud={handleForceSyncToCloud}
                     onToast={showToast}
                   />
                 )}

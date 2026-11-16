@@ -1,0 +1,394 @@
+{
+  "entities": {
+    "UserWorkspace": {
+      "title": "User Workspace",
+      "description": "Private user workspace configuration, preferences, playbook sections, and quote notification settings.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the workspace owner."
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Trader display name shown in the workspace."
+        },
+        "defaultMarket": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Default market focus e.g. Forex, Crypto, Metals."
+        },
+        "playbookCore": {
+          "type": "string",
+          "maxLength": 8000,
+          "description": "Core trading model rules."
+        },
+        "playbookRev": {
+          "type": "string",
+          "maxLength": 8000,
+          "description": "Reversal setup playbook rules."
+        },
+        "playbookCont": {
+          "type": "string",
+          "maxLength": 8000,
+          "description": "Continuation setup playbook rules."
+        },
+        "playbookEntry": {
+          "type": "string",
+          "maxLength": 8000,
+          "description": "Entry filters and confirmation criteria."
+        },
+        "playbookRisk": {
+          "type": "string",
+          "maxLength": 8000,
+          "description": "Invalidation and profit-target rules."
+        },
+        "quoteFrequency": {
+          "type": "number",
+          "description": "Motivational quote reminder cadence in minutes (0, 30, 60, 120, 240)."
+        },
+        "quoteNotifications": {
+          "type": "boolean",
+          "description": "Whether motivational quote notifications are enabled."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when workspace was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the latest workspace update."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "defaultMarket",
+        "playbookCore",
+        "playbookRev",
+        "playbookCont",
+        "playbookEntry",
+        "playbookRisk",
+        "quoteFrequency",
+        "quoteNotifications",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TradeRecord": {
+      "title": "Trade Record",
+      "description": "A single logged trading execution with R-multiple, tags, custom properties, and execution notes.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "date": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 32,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}"
+        },
+        "pair": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["Long", "Short"]
+        },
+        "setup": {
+          "type": "string",
+          "enum": ["Reversal", "Continuation", "Breakout", "Other"]
+        },
+        "session": {
+          "type": "string",
+          "enum": ["London", "New York", "Asia", "Overlap", "Other"]
+        },
+        "result": {
+          "type": "string",
+          "enum": ["Win", "Loss", "BE"]
+        },
+        "r": {
+          "type": "number"
+        },
+        "risk": {
+          "type": "number"
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "tags": {
+          "type": "array",
+          "description": "Bounded array of custom trade tags (max 15 tags, <= 40 chars each)."
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "custom": {
+          "type": "object",
+          "description": "Map of user-defined custom property values (max 40 keys)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "date",
+        "pair",
+        "direction",
+        "setup",
+        "session",
+        "result",
+        "r",
+        "risk",
+        "model",
+        "tags",
+        "notes",
+        "custom",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TradeImageRecord": {
+      "title": "Trade Screenshot Image",
+      "description": "Individual compressed chart screenshot linked to a parent trade document.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "tradeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "dataUrl": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 750000,
+          "pattern": "^data:image\\/"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "userId", "tradeId", "name", "dataUrl", "createdAt"]
+    },
+    "TradingModelRecord": {
+      "title": "Trading Model",
+      "description": "User-defined setup model with entry conditions and risk rules.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "type": {
+          "type": "string",
+          "enum": ["Reversal", "Continuation", "Both"]
+        },
+        "entry": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "risk": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "userId", "name", "type", "entry", "risk", "createdAt", "updatedAt"]
+    },
+    "CustomFieldRecord": {
+      "title": "Custom Property Field",
+      "description": "User-defined custom trade property schema appearing in the Log Trade modal.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "type": {
+          "type": "string",
+          "enum": ["text", "number", "both"]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "hint": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "options": {
+          "type": "array",
+          "description": "Bounded array of preset option strings (max 30 options)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "name",
+        "type",
+        "required",
+        "hint",
+        "options",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SessionAlarmRecord": {
+      "title": "Session Alarm",
+      "description": "Local-timezone trading session alarm time and active toggle.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "time": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 5,
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "sortOrder": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "userId", "name", "time", "enabled", "sortOrder", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserWorkspace" },
+      "description": "Private root workspace document for each verified trader."
+    },
+    "/users/{userId}/trades/{tradeId}": {
+      "schema": { "$ref": "#/entities/TradeRecord" },
+      "description": "Trader's logged executions."
+    },
+    "/users/{userId}/tradeImages/{imageId}": {
+      "schema": { "$ref": "#/entities/TradeImageRecord" },
+      "description": "Compressed chart screenshots linked to a tradeId."
+    },
+    "/users/{userId}/models/{modelId}": {
+      "schema": { "$ref": "#/entities/TradingModelRecord" },
+      "description": "Trader's saved strategy models."
+    },
+    "/users/{userId}/customFields/{fieldId}": {
+      "schema": { "$ref": "#/entities/CustomFieldRecord" },
+      "description": "Trader's custom trade properties."
+    },
+    "/users/{userId}/alarms/{alarmId}": {
+      "schema": { "$ref": "#/entities/SessionAlarmRecord" },
+      "description": "Trader's configured session alarms."
+    }
+  }
+}

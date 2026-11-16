@@ -4,17 +4,22 @@ import {
   BookOpen,
   Bot,
   CalendarDays,
+  Cloud,
+  CloudOff,
   Layers,
   LayoutDashboard,
+  LogIn,
+  LogOut,
   Menu,
   Plus,
+  RefreshCw,
   ScrollText,
   Settings,
-  ShieldCheck,
   Sparkles,
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import { useFirebase } from '../context/FirebaseContext';
 import type { PageId } from '../types/journal';
 import { PWAInstallButton } from './PWAInstallButton';
 
@@ -23,6 +28,8 @@ interface LayoutProps {
   onNavigate: (page: PageId) => void;
   onOpenTradeModal: () => void;
   onCycleQuote: () => void;
+  onSignIn: () => void;
+  onSignOut: () => void;
   displayName?: string;
   children: React.ReactNode;
 }
@@ -81,10 +88,13 @@ export const Layout: React.FC<LayoutProps> = ({
   onNavigate,
   onOpenTradeModal,
   onCycleQuote,
+  onSignIn,
+  onSignOut,
   displayName,
   children,
 }) => {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const { user, authBusy, cloudStatus } = useFirebase();
   const meta = PAGE_META[activePage];
   const isMoreActive = MOBILE_DRAWER_TABS.includes(activePage);
 
@@ -144,15 +154,76 @@ export const Layout: React.FC<LayoutProps> = ({
 
         <div className="mt-4 pt-4 border-t border-white/[0.08] space-y-3">
           <PWAInstallButton variant="full" />
-          <div className="rounded-xl glass-subcard p-3">
-            <div className="flex items-center gap-2 text-xs font-semibold text-[#c9d4e7]">
-              <ShieldCheck className="w-4 h-4 text-[#47dca0] shrink-0" />
-              <span>Private local storage</span>
+          {user ? (
+            <div className="rounded-xl glass-subcard p-3 space-y-2">
+              <div className="flex items-center gap-2.5">
+                {user.photoURL ? (
+                  <img
+                    src={user.photoURL}
+                    alt={user.displayName || 'Trader avatar'}
+                    referrerPolicy="no-referrer"
+                    className="h-8 w-8 rounded-lg object-cover border border-white/15 shrink-0"
+                  />
+                ) : (
+                  <div className="h-8 w-8 rounded-lg bg-[#47dca0]/20 border border-[#47dca0]/35 flex items-center justify-center text-xs font-bold text-[#8df0c0] shrink-0">
+                    {(user.displayName || user.email || 'T').slice(0, 1).toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-[#eef3fb] truncate">
+                    {user.displayName || 'Google Account'}
+                  </p>
+                  <p className="flex items-center gap-1 text-[11px] text-[#8df0c0] truncate">
+                    {cloudStatus === 'connecting' ? (
+                      <>
+                        <RefreshCw className="w-3 h-3 animate-spin shrink-0" />
+                        <span>Syncing…</span>
+                      </>
+                    ) : cloudStatus === 'error' ? (
+                      <>
+                        <CloudOff className="w-3 h-3 text-[#ff7d91] shrink-0" />
+                        <span className="text-[#ff7d91]">Sync paused</span>
+                      </>
+                    ) : (
+                      <>
+                        <Cloud className="w-3 h-3 shrink-0" />
+                        <span>Cloud synced</span>
+                      </>
+                    )}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  disabled={authBusy}
+                  title="Sign out"
+                  aria-label="Sign out"
+                  className="h-8 w-8 flex items-center justify-center rounded-lg text-[#8b9ab0] hover:text-[#ff7d91] hover:bg-white/[0.06] transition shrink-0"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
-            <p className="mt-1 text-[11px] leading-relaxed text-[#7e8ea6]">
-              Zero accounts or cloud sync. All trades and screenshots live on this device.
-            </p>
-          </div>
+          ) : (
+            <div className="rounded-xl glass-subcard p-3 space-y-2.5">
+              <div className="flex items-center gap-2 text-xs font-semibold text-[#c9d4e7]">
+                <CloudOff className="w-4 h-4 text-[#8ebeff] shrink-0" />
+                <span>Local device mode</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-[#7e8ea6]">
+                Sign in with Google to sync trades and screenshots privately across devices.
+              </p>
+              <button
+                type="button"
+                onClick={onSignIn}
+                disabled={authBusy}
+                className="w-full min-h-[38px] inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#47dca0]/15 border border-[#47dca0]/35 px-3 py-1.5 text-xs font-semibold text-[#8df0c0] hover:bg-[#47dca0]/25 disabled:opacity-50 transition"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>{authBusy ? 'Connecting…' : 'Sign in with Google'}</span>
+              </button>
+            </div>
+          )}
         </div>
       </aside>
 
@@ -187,6 +258,40 @@ export const Layout: React.FC<LayoutProps> = ({
               <div className="hidden sm:block">
                 <PWAInstallButton variant="compact" />
               </div>
+              <button
+                type="button"
+                onClick={() => handleSelectPage('settings')}
+                title={
+                  user
+                    ? `Signed in as ${user.displayName || user.email || 'Trader'}`
+                    : 'Sign in for cloud sync'
+                }
+                aria-label={user ? 'Cloud sync status' : 'Sign in for cloud sync'}
+                className="min-h-[40px] flex items-center gap-1.5 rounded-xl glass-subcard px-2.5 py-1.5 text-xs font-semibold text-[#c9d4e7] hover:border-[#47dca0]/45 transition shrink-0"
+              >
+                {user ? (
+                  <>
+                    {user.photoURL ? (
+                      <img
+                        src={user.photoURL}
+                        alt={user.displayName || 'Trader'}
+                        referrerPolicy="no-referrer"
+                        className="h-5 w-5 rounded-md object-cover border border-white/15"
+                      />
+                    ) : (
+                      <Cloud className="w-4 h-4 text-[#47dca0]" />
+                    )}
+                    <span className="hidden md:inline text-[#8df0c0]">
+                      {cloudStatus === 'connecting' ? 'Syncing…' : 'Synced'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <CloudOff className="w-4 h-4 text-[#8ebeff]" />
+                    <span className="hidden md:inline">Local</span>
+                  </>
+                )}
+              </button>
               <button
                 type="button"
                 onClick={onCycleQuote}
@@ -317,6 +422,43 @@ export const Layout: React.FC<LayoutProps> = ({
               </div>
 
               <div className="pt-2 pb-5 space-y-3">
+                {user ? (
+                  <div className="rounded-xl glass-subcard p-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-[#eef3fb] truncate">
+                        {user.displayName || user.email || 'Google Account'}
+                      </p>
+                      <p className="text-[11px] text-[#8df0c0]">
+                        {cloudStatus === 'connecting' ? 'Syncing cloud vault…' : 'Cloud Firestore synced'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDrawerOpen(false);
+                        onSignOut();
+                      }}
+                      disabled={authBusy}
+                      className="min-h-[38px] inline-flex items-center gap-1.5 rounded-lg border border-white/[0.14] px-3 py-1.5 text-xs font-semibold text-[#c9d4e7]"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Sign out</span>
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDrawerOpen(false);
+                      onSignIn();
+                    }}
+                    disabled={authBusy}
+                    className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#47dca0]/15 border border-[#47dca0]/35 px-4 py-2.5 text-sm font-semibold text-[#8df0c0]"
+                  >
+                    <LogIn className="w-4 h-4" />
+                    <span>{authBusy ? 'Connecting…' : 'Sign in with Google for Cloud Sync'}</span>
+                  </button>
+                )}
                 <PWAInstallButton variant="full" onInstalled={() => setDrawerOpen(false)} />
               </div>
             </motion.div>

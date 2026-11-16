@@ -389,27 +389,36 @@ export function compressImageFile(file: File): Promise<TradeScreenshot> {
       const img = new Image();
       img.onerror = () => reject(new Error(`Could not decode "${file.name}".`));
       img.onload = () => {
-        const maxEdge = 1400;
-        const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
-        const width = Math.max(1, Math.round(img.width * scale));
-        const height = Math.max(1, Math.round(img.height * scale));
+        const tryEncode = (maxEdge: number, quality: number): string => {
+          const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+          const width = Math.max(1, Math.round(img.width * scale));
+          const height = Math.max(1, Math.round(img.height * scale));
 
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Canvas context unavailable for image processing.'));
-          return;
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            throw new Error('Canvas context unavailable for image processing.');
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          return canvas.toDataURL('image/jpeg', quality);
+        };
+
+        try {
+          let dataUrl = tryEncode(1400, 0.8);
+          if (dataUrl.length > 680000) dataUrl = tryEncode(1200, 0.68);
+          if (dataUrl.length > 680000) dataUrl = tryEncode(960, 0.56);
+
+          resolve({
+            id: generateId(),
+            name: (file.name || 'chart.jpg').slice(0, 160),
+            dataUrl,
+            createdAt: new Date().toISOString(),
+          });
+        } catch (err) {
+          reject(err instanceof Error ? err : new Error('Failed to process image.'));
         }
-        ctx.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-        resolve({
-          id: generateId(),
-          name: file.name,
-          dataUrl,
-          createdAt: new Date().toISOString(),
-        });
       };
       img.src = String(reader.result);
     };
