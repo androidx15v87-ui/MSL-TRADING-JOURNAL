@@ -1,0 +1,6 @@
+{
+  "name": "MSL Trading Journal V10 Premium",
+  "description": "Private, local-first, offline-ready trading journal. Read the market. Respect the plan.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

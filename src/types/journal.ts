@@ -1,0 +1,152 @@
+export type Direction = 'Long' | 'Short';
+export type SetupType = 'Reversal' | 'Continuation' | 'Breakout' | 'Other';
+export type SessionType = 'London' | 'New York' | 'Asia' | 'Overlap' | 'Other';
+export type TradeOutcome = 'Win' | 'Loss' | 'BE';
+export type ModelType = 'Reversal' | 'Continuation' | 'Both';
+export type CustomFieldType = 'text' | 'number' | 'both';
+
+export type PageId =
+  | 'dashboard'
+  | 'journal'
+  | 'calendar'
+  | 'models'
+  | 'analytics'
+  | 'playbook'
+  | 'ai'
+  | 'settings';
+
+export type CustomFieldValue =
+  | string
+  | {
+      text?: string;
+      number?: string;
+    };
+
+export interface TradeScreenshot {
+  id: string;
+  name: string;
+  dataUrl: string;
+  createdAt: string;
+}
+
+export interface Trade {
+  id: string;
+  date: string; // ISO local datetime string YYYY-MM-DDTHH:mm
+  pair: string;
+  direction: Direction;
+  setup: SetupType;
+  session: SessionType;
+  result: TradeOutcome;
+  r: number;
+  risk: number;
+  model: string;
+  tags?: string[];
+  notes: string;
+  custom: Record<string, CustomFieldValue>;
+  images: TradeScreenshot[];
+  imageData?: string; // Legacy compatibility for V9/V10 single-image backups
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface TradingModel {
+  id: string;
+  name: string;
+  type: ModelType;
+  entry: string;
+  risk: string;
+}
+
+export interface CustomField {
+  id: string;
+  name: string;
+  type: CustomFieldType;
+  required: boolean;
+  hint: string;
+  options: string[];
+}
+
+export interface Playbook {
+  core: string;
+  rev: string;
+  cont: string;
+  entry: string;
+  risk: string;
+}
+
+export interface SessionAlarm {
+  id: string;
+  name: string;
+  time: string; // HH:mm
+  enabled: boolean;
+}
+
+export interface UserProfile {
+  name: string;
+  market: string;
+}
+
+export interface JournalSettings {
+  quoteFrequency: number; // 30 | 60 | 120 | 240 | 0 (0 = only at session alarms)
+  quoteNotifications: boolean;
+}
+
+export interface JournalState {
+  trades: Trade[];
+  models: TradingModel[];
+  fields: CustomField[];
+  playbook: Playbook;
+  alarms: SessionAlarm[];
+  profile: UserProfile;
+  settings: JournalSettings;
+}
+
+export interface BackupPayload extends JournalState {
+  format: 'msl-v10' | 'msl-v10-premium';
+  version: number;
+  exportedAt: string;
+}
+
+export interface JournalStats {
+  totalTrades: number;
+  wins: Trade[];
+  losses: Trade[];
+  breakevens: Trade[];
+  netR: number;
+  winRate: number;
+  expectancy: number;
+  profitFactor: number;
+  avgWinner: number;
+  avgLoser: number;
+  grossWin: number;
+  grossLoss: number;
+  bestSession: { name: string; netR: number } | null;
+  maxDrawdownR: number;
+  bestTradeR: number;
+  worstTradeR: number;
+  currentStreak: { type: 'Win' | 'Loss' | 'None'; count: number };
+  bestWinStreak: number;
+}
+
+export interface AIChatAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  dataUrl: string;
+}
+
+export interface AIChatMessage {
+  id: string;
+  role: 'user' | 'model';
+  text: string;
+  attachments?: AIChatAttachment[];
+  createdAt: string;
+  error?: boolean;
+}
+
+export interface AIConversation {
+  id: string;
+  title: string;
+  messages: AIChatMessage[];
+  updatedAt: string;
+}
