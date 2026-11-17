@@ -15,7 +15,7 @@ export default defineConfig(() => {
         includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
         manifest: {
           id: '/',
-          name: 'MSL Trading Journal V10 Premium',
+          name: 'MSL Trading Journal v10.2.1',
           short_name: 'MSL Journal',
           description: 'Private, local-first, offline-ready trading journal. Read the market. Respect the plan.',
           theme_color: '#080d18',
@@ -107,6 +107,28 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+      },
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id: string) {
+            if (!id.includes('node_modules')) return undefined;
+            if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {
+              return 'vendor-react';
+            }
+            if (id.includes('/firebase/') || id.includes('/@firebase/')) {
+              return 'vendor-firebase';
+            }
+            if (id.includes('/recharts/') || id.includes('/d3-')) {
+              return 'vendor-recharts';
+            }
+            if (id.includes('/motion/') || id.includes('/framer-motion/')) {
+              return 'vendor-motion';
+            }
+            return undefined;
+          },
+        },
       },
     },
     server: {

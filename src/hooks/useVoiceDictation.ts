@@ -42,6 +42,19 @@ function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
   return win.SpeechRecognition || win.webkitSpeechRecognition || null;
 }
 
+function pickSupportedAudioMime(): string {
+  if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
+    return '';
+  }
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/ogg;codecs=opus',
+  ];
+  return candidates.find((mime) => MediaRecorder.isTypeSupported(mime)) || '';
+}
+
 export interface UseVoiceDictationOptions {
   onFinalText: (fieldKey: string, text: string) => void;
   onError: (message: string) => void;
@@ -53,11 +66,14 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
   const [mode, setMode] = useState<'idle' | 'listening' | 'transcribing'>('idle');
 
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const recognitionEndPromiseRef = useRef<Promise<void> | null>(null);
+  const speechFallbackStickyRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const activeFieldRef = useRef<string | null>(null);
   const cancelledRef = useRef(false);
+  const gotSpeechResultRef = useRef(false);
 
   const onFinalTextRef = useRef(onFinalText);
   const onErrorRef = useRef(onError);
@@ -65,20 +81,59 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
   onErrorRef.current = onError;
 
   const cleanupMedia = useCallback(() => {
+    const rec = mediaRecorderRef.current;
+    if (rec) {
+      rec.ondataavailable = null;
+      rec.onstop = null;
+      rec.onerror = null;
+      mediaRecorderRef.current = null;
+    }
     if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {
+          // Ignore track stop errors
+        }
+      });
       mediaStreamRef.current = null;
     }
-    mediaRecorderRef.current = null;
     audioChunksRef.current = [];
   }, []);
 
-  const stop = useCallback((cancel = false) => {
-    cancelledRef.current = cancel;
+  const stopSpeechRecognition = useCallback((cancel: boolean): Promise<void> => {
+    const rec = recognitionRef.current;
+    if (!rec) {
+      return recognitionEndPromiseRef.current || Promise.resolve();
+    }
 
-    if (recognitionRef.current) {
-      const rec = recognitionRef.current;
-      recognitionRef.current = null;
+    recognitionRef.current = null;
+    const teardownPromise = new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        rec.onresult = null;
+        rec.onerror = null;
+        rec.onend = null;
+        recognitionEndPromiseRef.current = null;
+        resolve();
+      };
+
+      const safetyTimer = window.setTimeout(finish, 400);
+      const prevOnEnd = rec.onend;
+      rec.onend = () => {
+        window.clearTimeout(safetyTimer);
+        if (cancel && prevOnEnd) {
+          // Ignore UI reset from stale handler
+        }
+        finish();
+      };
+      rec.onerror = () => {
+        window.clearTimeout(safetyTimer);
+        finish();
+      };
+
       try {
         if (cancel) {
           rec.abort();
@@ -86,34 +141,49 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
           rec.stop();
         }
       } catch {
-        // Ignore already-stopped errors
+        window.clearTimeout(safetyTimer);
+        finish();
       }
-      setActiveField(null);
-      activeFieldRef.current = null;
-      setInterimText('');
-      setMode('idle');
-      return;
-    }
+    });
 
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch {
-        cleanupMedia();
+    recognitionEndPromiseRef.current = teardownPromise;
+    return teardownPromise;
+  }, []);
+
+  const stop = useCallback(
+    (cancel = false) => {
+      cancelledRef.current = cancel;
+
+      if (recognitionRef.current) {
+        void stopSpeechRecognition(cancel);
         setActiveField(null);
         activeFieldRef.current = null;
         setInterimText('');
         setMode('idle');
+        return;
       }
-      return;
-    }
 
-    cleanupMedia();
-    setActiveField(null);
-    activeFieldRef.current = null;
-    setInterimText('');
-    setMode('idle');
-  }, [cleanupMedia]);
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch {
+          cleanupMedia();
+          setActiveField(null);
+          activeFieldRef.current = null;
+          setInterimText('');
+          setMode('idle');
+        }
+        return;
+      }
+
+      cleanupMedia();
+      setActiveField(null);
+      activeFieldRef.current = null;
+      setInterimText('');
+      setMode('idle');
+    },
+    [cleanupMedia, stopSpeechRecognition]
+  );
 
   useEffect(() => {
     return () => {
@@ -132,17 +202,18 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
         return;
       }
 
+      // Guarantee any prior media stream or recorder is fully released before requesting a new one
+      cleanupMedia();
+      if (recognitionEndPromiseRef.current) {
+        await recognitionEndPromiseRef.current;
+      }
+
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaStreamRef.current = stream;
         audioChunksRef.current = [];
 
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? 'audio/webm;codecs=opus'
-          : MediaRecorder.isTypeSupported('audio/webm')
-          ? 'audio/webm'
-          : '';
-
+        const mimeType = pickSupportedAudioMime();
         const recorder = mimeType
           ? new MediaRecorder(stream, { mimeType })
           : new MediaRecorder(stream);
@@ -151,7 +222,7 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
         cancelledRef.current = false;
         activeFieldRef.current = fieldKey;
         setActiveField(fieldKey);
-        setInterimText('Recording audio… tap mic again to transcribe');
+        setInterimText('Recording voice note… tap mic again to transcribe');
         setMode('listening');
 
         recorder.ondataavailable = (event) => {
@@ -162,7 +233,7 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
 
         recorder.onstop = async () => {
           const targetField = activeFieldRef.current;
-          const recordedMime = recorder.mimeType || 'audio/webm';
+          const recordedMime = recorder.mimeType || mimeType || 'audio/webm';
           const blob = new Blob(audioChunksRef.current, { type: recordedMime });
           cleanupMedia();
 
@@ -227,10 +298,16 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
         activeFieldRef.current = null;
         setInterimText('');
         setMode('idle');
-        const msg =
-          err instanceof Error && err.name === 'NotAllowedError'
-            ? 'Microphone permission denied. Allow mic access to dictate notes.'
-            : 'Unable to access microphone.';
+
+        const errName = err instanceof Error ? err.name : '';
+        let msg = 'Unable to access microphone. Check browser permissions and try again.';
+        if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+          msg = 'Microphone permission blocked. Allow mic access in your browser site settings and try again.';
+        } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+          msg = 'No microphone detected on this device.';
+        } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
+          msg = 'Microphone is currently busy. Wait a moment and tap mic again.';
+        }
         onErrorRef.current(msg);
       }
     },
@@ -250,7 +327,12 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
         stop(true);
       }
 
-      const SpeechRec = getSpeechRecognitionCtor();
+      // Wait for any previous SpeechRecognition teardown to finish releasing audio hardware
+      if (recognitionEndPromiseRef.current) {
+        await recognitionEndPromiseRef.current;
+      }
+
+      const SpeechRec = !speechFallbackStickyRef.current ? getSpeechRecognitionCtor() : null;
       if (SpeechRec) {
         try {
           const recognition = new SpeechRec();
@@ -259,6 +341,7 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
           recognition.lang = navigator.language || 'en-US';
 
           cancelledRef.current = false;
+          gotSpeechResultRef.current = false;
           recognitionRef.current = recognition;
           activeFieldRef.current = fieldKey;
           setActiveField(fieldKey);
@@ -267,6 +350,7 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
 
           recognition.onresult = (event) => {
             if (cancelledRef.current) return;
+            gotSpeechResultRef.current = true;
             let finalChunk = '';
             let interimChunk = '';
             for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -288,22 +372,19 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
             const code = event.error;
             if (code === 'aborted' || code === 'no-speech') return;
 
+            // Many browsers/iframes reject SpeechRecognition on reuse with `not-allowed` or `audio-capture`
+            // even when `getUserMedia` mic recording works cleanly. Automatically switch to MediaRecorder fallback.
             recognitionRef.current = null;
+            recognitionEndPromiseRef.current = null;
             setActiveField(null);
             activeFieldRef.current = null;
             setInterimText('');
             setMode('idle');
 
             if (code === 'not-allowed' || code === 'service-not-allowed') {
-              onErrorRef.current(
-                'Microphone permission blocked. Allow mic access to use voice-to-text.'
-              );
-            } else if (code === 'network' || code === 'audio-capture') {
-              // Fall back seamlessly to MediaRecorder + server transcription
-              void startMediaFallback(fieldKey);
-            } else {
-              onErrorRef.current(`Voice input stopped (${code}).`);
+              speechFallbackStickyRef.current = true;
             }
+            void startMediaFallback(fieldKey);
           };
 
           recognition.onend = () => {

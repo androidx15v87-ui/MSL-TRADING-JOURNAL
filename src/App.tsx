@@ -1,4 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ConfirmModal } from './components/ConfirmModal';
 import { Layout } from './components/Layout';
@@ -7,7 +15,13 @@ import { TradeDetailModal } from './components/TradeDetailModal';
 import { TradeModal } from './components/TradeModal';
 import { useFirebase } from './context/FirebaseContext';
 import { createDefaultState, QUOTES, type QuoteItem } from './data/quotes';
-import { formatR, getAllTradeTags, isoDate } from './lib/calculations';
+import {
+  formatR,
+  generateId,
+  getAllTradeTags,
+  isoDate,
+  localDateTime,
+} from './lib/calculations';
 import {
   cloudDeleteField,
   cloudDeleteModel,
@@ -34,27 +48,60 @@ import {
 } from './lib/db';
 import { formatCloudErrorMessage } from './lib/firebase';
 import { evaluateAlarmsAndQuotes, syncNativeAlarms } from './lib/notifications';
-import { AIScreen } from './screens/AIScreen';
-import { AnalyticsScreen } from './screens/AnalyticsScreen';
-import { CalendarScreen } from './screens/CalendarScreen';
-import { JournalScreen } from './screens/JournalScreen';
-import { ModelsScreen } from './screens/ModelsScreen';
 import { OverviewScreen } from './screens/OverviewScreen';
-import { PlaybookScreen } from './screens/PlaybookScreen';
-import { SettingsScreen } from './screens/SettingsScreen';
 import type {
+  AIAppAction,
+  AIAppActionResult,
   CustomField,
+  Direction,
   JournalSettings,
   JournalState,
+  ModelType,
   PageId,
   Playbook,
   SessionAlarm,
+  SessionType,
+  SetupType,
   Trade,
+  TradeOutcome,
   TradingModel,
   UserProfile,
 } from './types/journal';
 
+// Lazy-load secondary screens for faster first paint & lighter memory footprint
+const JournalScreen = lazy(() =>
+  import('./screens/JournalScreen').then((m) => ({ default: m.JournalScreen }))
+);
+const CalendarScreen = lazy(() =>
+  import('./screens/CalendarScreen').then((m) => ({ default: m.CalendarScreen }))
+);
+const ModelsScreen = lazy(() =>
+  import('./screens/ModelsScreen').then((m) => ({ default: m.ModelsScreen }))
+);
+const AnalyticsScreen = lazy(() =>
+  import('./screens/AnalyticsScreen').then((m) => ({ default: m.AnalyticsScreen }))
+);
+const PlaybookScreen = lazy(() =>
+  import('./screens/PlaybookScreen').then((m) => ({ default: m.PlaybookScreen }))
+);
+const AIScreen = lazy(() =>
+  import('./screens/AIScreen').then((m) => ({ default: m.AIScreen }))
+);
+const SettingsScreen = lazy(() =>
+  import('./screens/SettingsScreen').then((m) => ({ default: m.SettingsScreen }))
+);
+
 const LAST_SYNCED_UID_KEY = 'msl_v10_last_uid';
+const VALID_PAGES = new Set<PageId>([
+  'dashboard',
+  'journal',
+  'calendar',
+  'models',
+  'analytics',
+  'playbook',
+  'ai',
+  'settings',
+]);
 
 function randomQuote(exclude?: QuoteItem): QuoteItem {
   if (QUOTES.length <= 1) return QUOTES[0];
@@ -65,11 +112,58 @@ function randomQuote(exclude?: QuoteItem): QuoteItem {
   return pick;
 }
 
+function normalizeDirection(val: unknown): Direction {
+  return String(val).toLowerCase() === 'short' ? 'Short' : 'Long';
+}
+
+function normalizeSetup(val: unknown): SetupType {
+  const lower = String(val || '').toLowerCase();
+  if (lower.includes('cont')) return 'Continuation';
+  if (lower.includes('break')) return 'Breakout';
+  if (lower.includes('other')) return 'Other';
+  return 'Reversal';
+}
+
+function normalizeSession(val: unknown): SessionType {
+  const lower = String(val || '').toLowerCase();
+  if (lower.includes('ny') || lower.includes('new york')) return 'New York';
+  if (lower.includes('asia') || lower.includes('tokyo')) return 'Asia';
+  if (lower.includes('overlap')) return 'Overlap';
+  if (lower.includes('other')) return 'Other';
+  return 'London';
+}
+
+function normalizeOutcome(val: unknown): TradeOutcome {
+  const lower = String(val || '').toLowerCase();
+  if (lower.startsWith('l')) return 'Loss';
+  if (lower === 'be' || lower.includes('break')) return 'BE';
+  return 'Win';
+}
+
+function normalizeModelType(val: unknown): ModelType {
+  const lower = String(val || '').toLowerCase();
+  if (lower.includes('cont')) return 'Continuation';
+  if (lower.includes('both')) return 'Both';
+  return 'Reversal';
+}
+
+const ScreenSkeleton = () => (
+  <div className="space-y-4 animate-pulse">
+    <div className="h-36 rounded-2xl glass-card" />
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="h-28 rounded-2xl glass-card" />
+      <div className="h-28 rounded-2xl glass-card" />
+    </div>
+  </div>
+);
+
 export default function App() {
   const [state, setState] = useState<JournalState>(() => createDefaultState());
   const [hydrated, setHydrated] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
+  const [splashPhase, setSplashPhase] = useState<1 | 2>(1);
   const [activePage, setActivePage] = useState<PageId>('dashboard');
+  const [aiMounted, setAiMounted] = useState(false);
   const [quote, setQuote] = useState<QuoteItem>(() => randomQuote());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -100,6 +194,8 @@ export default function App() {
   const splashStartRef = useRef<number>(Date.now());
   const stateRef = useRef<JournalState>(state);
   stateRef.current = state;
+  const userRef = useRef(user);
+  userRef.current = user;
   const mergedForSessionRef = useRef<string | null>(null);
 
   const showToast = useCallback((msg: string) => {
@@ -129,6 +225,26 @@ export default function App() {
       active = false;
     };
   }, [showToast]);
+
+  // Warm up all lazy screen chunks immediately during splash so every tab switch is 0ms
+  useEffect(() => {
+    if (!hydrated) return;
+    if (activePage === 'ai') setAiMounted(true);
+  }, [activePage, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = window.setTimeout(() => {
+      void import('./screens/JournalScreen');
+      void import('./screens/CalendarScreen');
+      void import('./screens/ModelsScreen');
+      void import('./screens/AnalyticsScreen');
+      void import('./screens/PlaybookScreen');
+      void import('./screens/AIScreen');
+      void import('./screens/SettingsScreen');
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [hydrated]);
 
   // Attach real-time Cloud Firestore workspace & sync when authenticated + hydrated
   useEffect(() => {
@@ -230,11 +346,18 @@ export default function App() {
     };
   }, [hydrated, authReady, user, setCloudStatus, setCloudError, showToast]);
 
-  // App opening splash timer (3-second liquid-glass entrance animation)
+  // App opening double animation (5 seconds total: 0-2.4s Orbital Crest -> 2.4-5.0s Edge Readiness)
+  useEffect(() => {
+    const phaseTimer = window.setTimeout(() => {
+      setSplashPhase(2);
+    }, 2400);
+    return () => window.clearTimeout(phaseTimer);
+  }, []);
+
   useEffect(() => {
     if (!hydrated) return;
     const elapsed = Date.now() - splashStartRef.current;
-    const remaining = Math.max(0, 3000 - elapsed);
+    const remaining = Math.max(0, 5000 - elapsed);
     const timer = window.setTimeout(() => {
       setShowSplash(false);
     }, remaining);
@@ -278,12 +401,12 @@ export default function App() {
     };
   }, [hydrated, state.alarms, state.settings, showToast]);
 
-  const handleOpenNewTrade = (dateIso?: string) => {
+  const handleOpenNewTrade = useCallback((dateIso?: string) => {
     setEditingTrade(null);
     setDraftTemplate(null);
     setModalInitialDate(dateIso);
     setTradeModalOpen(true);
-  };
+  }, []);
 
   const handleEditTrade = (trade: Trade) => {
     setViewingTrade(null);
@@ -439,6 +562,7 @@ export default function App() {
   ) => {
     await Promise.all([saveKV('alarms', alarms), saveKV('settings', settings)]);
     setState((prev) => ({ ...prev, alarms, settings }));
+    syncNativeAlarms(alarms);
 
     if (user) {
       try {
@@ -465,6 +589,267 @@ export default function App() {
     }
   };
 
+  const handleCycleQuote = useCallback(() => {
+    setQuote((prev) => randomQuote(prev));
+  }, []);
+
+  // Execute MSL AI App Control Actions (syncs to state, IndexedDB, and Cloud Firestore)
+  const handleExecuteAIActions = useCallback(
+    async (actions: AIAppAction[]): Promise<AIAppActionResult[]> => {
+      const results: AIAppActionResult[] = [];
+      const activeUser = userRef.current;
+
+      for (const action of actions) {
+        try {
+          if (action.name === 'navigate_app') {
+            const target = String(action.args?.page || 'dashboard').toLowerCase() as PageId;
+            if (VALID_PAGES.has(target)) {
+              setActivePage(target);
+              results.push({
+                name: action.name,
+                label: `Opened ${target}`,
+                ok: true,
+              });
+            } else {
+              results.push({
+                name: action.name,
+                label: `Unknown screen "${target}"`,
+                ok: false,
+              });
+            }
+          } else if (action.name === 'open_log_trade_modal') {
+            handleOpenNewTrade(action.args?.initialDate);
+            results.push({
+              name: action.name,
+              label: 'Opened Log Trade modal',
+              ok: true,
+            });
+          } else if (action.name === 'log_trade') {
+            const nowIso = new Date().toISOString();
+            const newTrade: Trade = {
+              id: generateId(),
+              date:
+                typeof action.args.date === 'string' && action.args.date.trim()
+                  ? action.args.date.trim().slice(0, 16)
+                  : localDateTime(new Date()),
+              pair: String(action.args.pair || 'EURUSD').trim().toUpperCase(),
+              direction: normalizeDirection(action.args.direction),
+              setup: normalizeSetup(action.args.setup),
+              session: normalizeSession(action.args.session),
+              result: normalizeOutcome(action.args.result),
+              r: Number.isFinite(Number(action.args.r)) ? Number(action.args.r) : 0,
+              risk:
+                Number.isFinite(Number(action.args.risk)) && Number(action.args.risk) > 0
+                  ? Number(action.args.risk)
+                  : 1,
+              model: String(action.args.model || '').trim(),
+              tags: Array.isArray(action.args.tags)
+                ? action.args.tags.map((t) => String(t).trim()).filter(Boolean)
+                : [],
+              notes: String(action.args.notes || '').trim(),
+              custom: {},
+              images: [],
+              createdAt: nowIso,
+              updatedAt: nowIso,
+            };
+
+            await saveTradeRecord(newTrade);
+            setState((prev) => ({
+              ...prev,
+              trades: [newTrade, ...prev.trades],
+            }));
+            if (activeUser) {
+              await cloudSaveTrade(activeUser.uid, newTrade).catch(() => {});
+            }
+            const label = `Logged ${newTrade.pair} ${newTrade.direction} (${formatR(newTrade.r)})`;
+            results.push({ name: action.name, label, ok: true });
+            showToast(`MSL AI: ${label}`);
+          } else if (action.name === 'update_trade') {
+            const targetId = String(action.args.tradeId || '').trim();
+            const existing = stateRef.current.trades.find((t) => t.id === targetId);
+            if (!existing) {
+              results.push({
+                name: action.name,
+                label: `Trade ${targetId} not found`,
+                ok: false,
+              });
+              continue;
+            }
+            const updated: Trade = {
+              ...existing,
+              pair: action.args.pair ? String(action.args.pair).toUpperCase() : existing.pair,
+              direction: action.args.direction
+                ? normalizeDirection(action.args.direction)
+                : existing.direction,
+              setup: action.args.setup ? normalizeSetup(action.args.setup) : existing.setup,
+              session: action.args.session
+                ? normalizeSession(action.args.session)
+                : existing.session,
+              result: action.args.result
+                ? normalizeOutcome(action.args.result)
+                : existing.result,
+              r:
+                action.args.r !== undefined && Number.isFinite(Number(action.args.r))
+                  ? Number(action.args.r)
+                  : existing.r,
+              risk:
+                action.args.risk !== undefined && Number.isFinite(Number(action.args.risk))
+                  ? Number(action.args.risk)
+                  : existing.risk,
+              model: action.args.model !== undefined ? String(action.args.model) : existing.model,
+              tags: Array.isArray(action.args.tags)
+                ? action.args.tags.map((t) => String(t).trim()).filter(Boolean)
+                : existing.tags,
+              notes: action.args.notes !== undefined ? String(action.args.notes) : existing.notes,
+              updatedAt: new Date().toISOString(),
+            };
+            await saveTradeRecord(updated);
+            setState((prev) => ({
+              ...prev,
+              trades: [updated, ...prev.trades.filter((x) => x.id !== updated.id)],
+            }));
+            if (activeUser) {
+              await cloudSaveTrade(activeUser.uid, updated).catch(() => {});
+            }
+            const label = `Updated ${updated.pair} (${formatR(updated.r)})`;
+            results.push({ name: action.name, label, ok: true });
+            showToast(`MSL AI: ${label}`);
+          } else if (action.name === 'delete_trade') {
+            const targetId = String(action.args.tradeId || '').trim();
+            const existing = stateRef.current.trades.find((t) => t.id === targetId);
+            if (!existing) {
+              results.push({
+                name: action.name,
+                label: `Trade ${targetId} not found`,
+                ok: false,
+              });
+              continue;
+            }
+            await deleteTradeRecord(targetId);
+            setState((prev) => ({
+              ...prev,
+              trades: prev.trades.filter((x) => x.id !== targetId),
+            }));
+            if (activeUser) {
+              await cloudDeleteTrade(activeUser.uid, targetId).catch(() => {});
+            }
+            const label = `Deleted ${existing.pair} (${formatR(existing.r)})`;
+            results.push({ name: action.name, label, ok: true });
+            showToast(`MSL AI: ${label}`);
+          } else if (action.name === 'create_trading_model') {
+            const newModel: TradingModel = {
+              id: generateId(),
+              name: String(action.args.name || 'AI Setup Model').trim(),
+              type: normalizeModelType(action.args.type),
+              entry: String(action.args.entry || '').trim(),
+              risk: String(action.args.risk || '').trim(),
+            };
+            const nextModels = [newModel, ...stateRef.current.models];
+            await saveKV('models', nextModels);
+            setState((prev) => ({ ...prev, models: nextModels }));
+            if (activeUser) {
+              await cloudSaveModel(activeUser.uid, newModel).catch(() => {});
+            }
+            results.push({
+              name: action.name,
+              label: `Saved model "${newModel.name}"`,
+              ok: true,
+            });
+            showToast(`MSL AI: Saved model "${newModel.name}"`);
+          } else if (action.name === 'update_playbook') {
+            const currentPb = stateRef.current.playbook;
+            const nextPlaybook: Playbook = {
+              core:
+                action.args.core !== undefined ? String(action.args.core) : currentPb.core,
+              rev: action.args.rev !== undefined ? String(action.args.rev) : currentPb.rev,
+              cont:
+                action.args.cont !== undefined ? String(action.args.cont) : currentPb.cont,
+              entry:
+                action.args.entry !== undefined ? String(action.args.entry) : currentPb.entry,
+              risk:
+                action.args.risk !== undefined ? String(action.args.risk) : currentPb.risk,
+            };
+            await saveKV('playbook', nextPlaybook);
+            setState((prev) => ({ ...prev, playbook: nextPlaybook }));
+            if (activeUser) {
+              await cloudSavePlaybook(activeUser.uid, nextPlaybook).catch(() => {});
+            }
+            results.push({
+              name: action.name,
+              label: 'Updated Playbook',
+              ok: true,
+            });
+            showToast('MSL AI: Playbook updated.');
+          } else if (action.name === 'update_session_alarm') {
+            const alarmName = String(action.args.name || '').trim();
+            const currentAlarms = stateRef.current.alarms;
+            const matchIdx = currentAlarms.findIndex(
+              (a) => a.name.toLowerCase() === alarmName.toLowerCase()
+            );
+            let nextAlarms: SessionAlarm[];
+            if (matchIdx >= 0) {
+              nextAlarms = currentAlarms.map((a, idx) =>
+                idx === matchIdx
+                  ? {
+                      ...a,
+                      time: action.args.time ? String(action.args.time) : a.time,
+                      enabled:
+                        action.args.enabled !== undefined
+                          ? Boolean(action.args.enabled)
+                          : a.enabled,
+                    }
+                  : a
+              );
+            } else {
+              nextAlarms = [
+                ...currentAlarms,
+                {
+                  id: generateId(),
+                  name: alarmName || 'Session Alarm',
+                  time: action.args.time ? String(action.args.time) : '08:00',
+                  enabled:
+                    action.args.enabled !== undefined ? Boolean(action.args.enabled) : true,
+                },
+              ];
+            }
+            await saveKV('alarms', nextAlarms);
+            setState((prev) => ({ ...prev, alarms: nextAlarms }));
+            syncNativeAlarms(nextAlarms);
+            if (activeUser) {
+              await cloudSaveAlarmsAndSettings(
+                activeUser.uid,
+                nextAlarms,
+                stateRef.current.settings
+              ).catch(() => {});
+            }
+            results.push({
+              name: action.name,
+              label: `Alarm "${alarmName}" updated`,
+              ok: true,
+            });
+            showToast(`MSL AI: Alarm "${alarmName}" updated.`);
+          } else if (action.name === 'cycle_motivational_quote') {
+            handleCycleQuote();
+            results.push({
+              name: action.name,
+              label: 'Refreshed discipline quote',
+              ok: true,
+            });
+          }
+        } catch {
+          results.push({
+            name: action.name,
+            label: `Failed ${action.name}`,
+            ok: false,
+          });
+        }
+      }
+
+      return results;
+    },
+    [handleCycleQuote, handleOpenNewTrade, showToast]
+  );
+
   const handleDownloadBackup = () => {
     const payload = buildBackupPayload(state);
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
@@ -473,14 +858,26 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `MSL-Journal-V10-backup-${isoDate(new Date())}.json`;
+    a.download = `MSL-Journal-v10.2.1-backup-${isoDate(new Date())}.json`;
     a.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     showToast('Full backup downloaded.');
   };
 
   const handleExportCSV = (filteredTrades: Trade[]) => {
-    const headers = ['Date', 'Symbol', 'Side', 'Setup', 'Session', 'Outcome', 'R Multiple', 'Risk (R)', 'Model', 'Tags', 'Notes'];
+    const headers = [
+      'Date',
+      'Symbol',
+      'Side',
+      'Setup',
+      'Session',
+      'Outcome',
+      'R Multiple',
+      'Risk (R)',
+      'Model',
+      'Tags',
+      'Notes',
+    ];
     const escapeCsv = (val: string) => `"${String(val ?? '').replace(/"/g, '""')}"`;
     const rows = filteredTrades.map((t) =>
       [
@@ -570,10 +967,6 @@ export default function App() {
     }
   };
 
-  const handleCycleQuote = () => {
-    setQuote((prev) => randomQuote(prev));
-  };
-
   const handleCopyQuote = async () => {
     try {
       await navigator.clipboard.writeText(`“${quote.text}” — ${quote.source}`);
@@ -585,56 +978,90 @@ export default function App() {
 
   return (
     <>
-      {/* Liquid Glass App Entry Splash (3 seconds) */}
+      {/* 5-Second Liquid-Glass Double Opening Animation */}
       <AnimatePresence>
         {showSplash && (
           <motion.div
             initial={{ opacity: 1 }}
             exit={{ opacity: 0, scale: 1.03 }}
             transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#080d18]/94 backdrop-blur-2xl px-6 select-none"
+            className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#080d18]/96 backdrop-blur-2xl px-6 select-none overflow-hidden"
           >
+            {/* Ambient radial glow */}
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <div className="h-72 w-72 rounded-full bg-[#47dca0]/12 blur-3xl" />
+            </div>
+
             <motion.div
               initial={{ opacity: 0, y: 20, scale: 0.92 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-              className="glass-card rounded-3xl px-8 py-8 flex flex-col items-center text-center max-w-xs w-full"
+              transition={{ duration: 0.65, ease: [0.16, 1, 0.3, 1] }}
+              className="relative glass-card rounded-3xl px-8 py-8 flex flex-col items-center text-center max-w-xs w-full overflow-hidden"
             >
-              <motion.div
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ duration: 0.65, delay: 0.15, ease: [0.16, 1, 0.3, 1] }}
-                className="h-16 w-16 rounded-2xl border border-white/20 bg-gradient-to-br from-[#1d3e42]/80 to-[#0d1d2d]/80 flex items-center justify-center font-display text-lg font-extrabold tracking-tight text-[#8df0c0] shadow-[inset_0_1px_0_rgba(255,255,255,0.24)]"
-              >
-                MSL
-              </motion.div>
-              <motion.p
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.55, delay: 0.35, ease: [0.16, 1, 0.3, 1] }}
-                className="mt-4 font-display text-xl font-extrabold tracking-tight text-[#eef3fb]"
-              >
-                MSL Journal <span className="text-[#47dca0]">✦</span>
-              </motion.p>
-              <motion.p
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.55, delay: 0.55 }}
-                className="mt-1 text-[11px] font-semibold tracking-[0.18em] text-[#8b9ab0] uppercase"
-              >
-                V10 Premium
-              </motion.p>
-              <div className="mt-5 h-1.5 w-40 rounded-full bg-white/10 overflow-hidden">
+              <AnimatePresence mode="wait">
+                {splashPhase === 1 ? (
+                  <motion.div
+                    key="splash-phase-1"
+                    initial={{ opacity: 0, y: 12, scale: 0.94 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -14, scale: 0.94 }}
+                    transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+                    className="flex flex-col items-center"
+                  >
+                    {/* Orbital double-ring crest */}
+                    <div className="relative h-20 w-20 flex items-center justify-center">
+                      <div className="absolute inset-0 rounded-full border border-[#47dca0]/35 border-t-[#8df0c0] animate-orbit-slow" />
+                      <div className="absolute inset-1.5 rounded-full border border-[#8ebeff]/25 border-b-[#8ebeff] animate-orbit-reverse" />
+                      <div className="h-14 w-14 rounded-2xl border border-white/25 bg-gradient-to-br from-[#1d3e42]/90 to-[#0d1d2d]/90 flex items-center justify-center font-display text-lg font-extrabold tracking-tight text-[#8df0c0] shadow-[inset_0_1px_0_rgba(255,255,255,0.28)]">
+                        MSL
+                      </div>
+                    </div>
+
+                    <p className="mt-4 font-display text-xl font-extrabold tracking-tight text-[#eef3fb]">
+                      MSL Journal <span className="text-[#47dca0]">✦</span>
+                    </p>
+                    <p className="mt-1 text-[11px] font-semibold tracking-[0.2em] text-[#8b9ab0] uppercase">
+                      Version 10.2.1
+                    </p>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="splash-phase-2"
+                    initial={{ opacity: 0, y: 14, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, scale: 1.03 }}
+                    transition={{ duration: 0.48, ease: [0.16, 1, 0.3, 1] }}
+                    className="flex flex-col items-center"
+                  >
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#47dca0]/15 border border-[#47dca0]/40 px-3 py-1 text-[11px] font-bold tracking-wider text-[#8df0c0] uppercase">
+                      Edge &amp; Execution Ready
+                    </span>
+
+                    <p className="mt-4 font-display text-lg font-extrabold tracking-tight text-[#eef3fb]">
+                      Read the market.
+                      <br />
+                      <span className="text-[#47dca0]">Respect the plan.</span>
+                    </p>
+
+                    <div className="mt-3 flex items-center gap-2 text-[11px] font-medium text-[#9aa8be]">
+                      <span className="rounded-lg bg-white/[0.06] border border-white/[0.08] px-2.5 py-1">
+                        {state.trades.length} Trades
+                      </span>
+                      <span className="rounded-lg bg-white/[0.06] border border-white/[0.08] px-2.5 py-1">
+                        {user ? 'Cloud Sync' : 'Local Vault'}
+                      </span>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Unified 5-second liquid-glass progress bar */}
+              <div className="mt-6 h-1.5 w-44 rounded-full bg-white/10 overflow-hidden">
                 <div className="h-full w-full rounded-full bg-gradient-to-r from-[#47dca0] via-[#8df0c0] to-[#8ebeff] animate-splash-bar" />
               </div>
-              <motion.p
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.6, delay: 0.8 }}
-                className="mt-3.5 text-xs text-[#8b9ab0]"
-              >
-                Read the market. Respect the plan.
-              </motion.p>
+              <p className="mt-2.5 text-[11px] font-medium text-[#7c8ca3]">
+                {splashPhase === 1 ? 'Initializing workspace…' : 'Syncing your trading edge…'}
+              </p>
             </motion.div>
           </motion.div>
         )}
@@ -643,7 +1070,7 @@ export default function App() {
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
       >
         <Layout
           activePage={activePage}
@@ -665,90 +1092,98 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={activePage}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-              >
-                {activePage === 'dashboard' && (
-                  <OverviewScreen
-                    trades={state.trades}
-                    alarms={state.alarms}
-                    quote={quote}
-                    onNextQuote={handleCycleQuote}
-                    onCopyQuote={handleCopyQuote}
-                    onOpenLogTrade={() => handleOpenNewTrade()}
-                    onNavigate={setActivePage}
-                    onSelectTrade={(t) => setViewingTrade(t)}
+            <Suspense fallback={<ScreenSkeleton />}>
+              {aiMounted && (
+                <div className={activePage === 'ai' ? 'block' : 'hidden'}>
+                  <AIScreen
+                    journalState={state}
+                    onExecuteAIActions={handleExecuteAIActions}
                   />
-                )}
+                </div>
+              )}
 
-                {activePage === 'journal' && (
-                  <JournalScreen
-                    trades={state.trades}
-                    onOpenNewTrade={() => handleOpenNewTrade()}
-                    onSelectTrade={(t) => setViewingTrade(t)}
-                    onExportBackup={handleDownloadBackup}
-                    onExportCSV={handleExportCSV}
-                  />
-                )}
+              {activePage !== 'ai' && (
+                <motion.div
+                  key={activePage}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.08, ease: 'easeOut' }}
+                >
+                  {activePage === 'dashboard' && (
+                    <OverviewScreen
+                      trades={state.trades}
+                      alarms={state.alarms}
+                      quote={quote}
+                      onNextQuote={handleCycleQuote}
+                      onCopyQuote={handleCopyQuote}
+                      onOpenLogTrade={() => handleOpenNewTrade()}
+                      onNavigate={setActivePage}
+                      onSelectTrade={(t) => setViewingTrade(t)}
+                    />
+                  )}
 
-                {activePage === 'calendar' && (
-                  <CalendarScreen
-                    trades={state.trades}
-                    onLogTradeForDate={(dateIso) => handleOpenNewTrade(dateIso)}
-                    onSelectTrade={(t) => setViewingTrade(t)}
-                  />
-                )}
+                  {activePage === 'journal' && (
+                    <JournalScreen
+                      trades={state.trades}
+                      onOpenNewTrade={() => handleOpenNewTrade()}
+                      onSelectTrade={(t) => setViewingTrade(t)}
+                      onExportBackup={handleDownloadBackup}
+                      onExportCSV={handleExportCSV}
+                    />
+                  )}
 
-                {activePage === 'models' && (
-                  <ModelsScreen
-                    models={state.models}
-                    fields={state.fields}
-                    onSaveModel={handleSaveModel}
-                    onDeleteModel={handleDeleteModel}
-                    onSaveField={handleSaveField}
-                    onDeleteField={handleDeleteField}
-                  />
-                )}
+                  {activePage === 'calendar' && (
+                    <CalendarScreen
+                      trades={state.trades}
+                      onLogTradeForDate={(dateIso) => handleOpenNewTrade(dateIso)}
+                      onSelectTrade={(t) => setViewingTrade(t)}
+                    />
+                  )}
 
-                {activePage === 'analytics' && (
-                  <AnalyticsScreen
-                    trades={state.trades}
-                    onSelectTrade={(t) => setViewingTrade(t)}
-                  />
-                )}
+                  {activePage === 'models' && (
+                    <ModelsScreen
+                      models={state.models}
+                      fields={state.fields}
+                      onSaveModel={handleSaveModel}
+                      onDeleteModel={handleDeleteModel}
+                      onSaveField={handleSaveField}
+                      onDeleteField={handleDeleteField}
+                    />
+                  )}
 
-                {activePage === 'playbook' && (
-                  <PlaybookScreen
-                    playbook={state.playbook}
-                    onSavePlaybook={handleSavePlaybook}
-                  />
-                )}
+                  {activePage === 'analytics' && (
+                    <AnalyticsScreen
+                      trades={state.trades}
+                      onSelectTrade={(t) => setViewingTrade(t)}
+                    />
+                  )}
 
-                {activePage === 'ai' && <AIScreen journalState={state} />}
+                  {activePage === 'playbook' && (
+                    <PlaybookScreen
+                      playbook={state.playbook}
+                      onSavePlaybook={handleSavePlaybook}
+                    />
+                  )}
 
-                {activePage === 'settings' && (
-                  <SettingsScreen
-                    alarms={state.alarms}
-                    settings={state.settings}
-                    profile={state.profile}
-                    onSaveAlarmsAndSettings={handleSaveAlarmsAndSettings}
-                    onSaveProfile={handleSaveProfile}
-                    onDownloadBackup={handleDownloadBackup}
-                    onRestoreBackup={handleRestoreBackup}
-                    onClearAllData={handleClearAllData}
-                    onSignIn={handleSignIn}
-                    onSignOut={handleSignOut}
-                    onForceSyncToCloud={handleForceSyncToCloud}
-                    onToast={showToast}
-                  />
-                )}
-              </motion.div>
-            </AnimatePresence>
+                  {activePage === 'settings' && (
+                    <SettingsScreen
+                      alarms={state.alarms}
+                      settings={state.settings}
+                      profile={state.profile}
+                      onSaveAlarmsAndSettings={handleSaveAlarmsAndSettings}
+                      onSaveProfile={handleSaveProfile}
+                      onDownloadBackup={handleDownloadBackup}
+                      onRestoreBackup={handleRestoreBackup}
+                      onClearAllData={handleClearAllData}
+                      onSignIn={handleSignIn}
+                      onSignOut={handleSignOut}
+                      onForceSyncToCloud={handleForceSyncToCloud}
+                      onToast={showToast}
+                    />
+                  )}
+                </motion.div>
+              )}
+            </Suspense>
           )}
         </Layout>
       </motion.div>
@@ -809,7 +1244,7 @@ export default function App() {
             initial={{ opacity: 0, y: -12, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8, scale: 0.97 }}
-            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
             className="fixed top-16 sm:top-5 right-4 z-[70] max-w-xs sm:max-w-sm rounded-xl glass-modal border-[#47dca0]/40 px-4 py-2.5 text-xs sm:text-sm font-medium text-[#eef3fb]"
           >
             {toastMessage}

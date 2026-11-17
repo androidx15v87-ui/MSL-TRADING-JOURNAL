@@ -101,7 +101,9 @@ export const Layout: React.FC<LayoutProps> = ({
   const handleSelectPage = (page: PageId) => {
     onNavigate(page);
     setDrawerOpen(false);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (window.scrollY > 0) {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    }
   };
 
   return (
@@ -121,12 +123,12 @@ export const Layout: React.FC<LayoutProps> = ({
               MSL Journal
             </span>
             <span className="block text-[11px] text-[#8b9ab0] truncate">
-              {displayName ? `${displayName} · V10 Premium` : 'V10 Premium'}
+              {displayName ? `${displayName} · Version 10.2.1` : 'Version 10.2.1'}
             </span>
           </span>
         </button>
 
-        <div className="px-2.5 pb-2 text-[11px] font-semibold tracking-wider text-[#64748b] uppercase">
+        <div className="px-2.5 pb-2 text-xs font-medium text-[#7c8ca6]">
           Workspace
         </div>
 
@@ -155,69 +157,67 @@ export const Layout: React.FC<LayoutProps> = ({
         <div className="mt-4 pt-4 border-t border-white/[0.08] space-y-3">
           <PWAInstallButton variant="full" />
           {user ? (
-            <div className="rounded-xl glass-subcard p-3 space-y-2">
-              <div className="flex items-center gap-2.5">
-                {user.photoURL ? (
-                  <img
-                    src={user.photoURL}
-                    alt={user.displayName || 'Trader avatar'}
-                    referrerPolicy="no-referrer"
-                    className="h-8 w-8 rounded-lg object-cover border border-white/15 shrink-0"
-                  />
-                ) : (
-                  <div className="h-8 w-8 rounded-lg bg-[#47dca0]/20 border border-[#47dca0]/35 flex items-center justify-center text-xs font-bold text-[#8df0c0] shrink-0">
-                    {(user.displayName || user.email || 'T').slice(0, 1).toUpperCase()}
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-[#eef3fb] truncate">
-                    {user.displayName || 'Google Account'}
-                  </p>
-                  <p className="flex items-center gap-1 text-[11px] text-[#8df0c0] truncate">
-                    {cloudStatus === 'connecting' ? (
-                      <>
-                        <RefreshCw className="w-3 h-3 animate-spin shrink-0" />
-                        <span>Syncing…</span>
-                      </>
-                    ) : cloudStatus === 'error' ? (
-                      <>
-                        <CloudOff className="w-3 h-3 text-[#ff7d91] shrink-0" />
-                        <span className="text-[#ff7d91]">Sync paused</span>
-                      </>
-                    ) : (
-                      <>
-                        <Cloud className="w-3 h-3 shrink-0" />
-                        <span>Cloud synced</span>
-                      </>
-                    )}
-                  </p>
+            <div className="pt-3 border-t border-white/[0.08] flex items-center gap-2.5">
+              {user.photoURL ? (
+                <img
+                  src={user.photoURL}
+                  alt={user.displayName || 'Trader avatar'}
+                  referrerPolicy="no-referrer"
+                  className="h-8 w-8 rounded-lg object-cover border border-white/15 shrink-0"
+                />
+              ) : (
+                <div className="h-8 w-8 rounded-lg bg-[#47dca0]/20 border border-[#47dca0]/35 flex items-center justify-center text-xs font-bold text-[#8df0c0] shrink-0">
+                  {(user.displayName || user.email || 'T').slice(0, 1).toUpperCase()}
                 </div>
-                <button
-                  type="button"
-                  onClick={onSignOut}
-                  disabled={authBusy}
-                  title="Sign out"
-                  aria-label="Sign out"
-                  className="h-8 w-8 flex items-center justify-center rounded-lg text-[#8b9ab0] hover:text-[#ff7d91] hover:bg-white/[0.06] transition shrink-0"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                </button>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-[#eef3fb] truncate">
+                  {user.displayName || 'Google Account'}
+                </p>
+                <p className="flex items-center gap-1 text-[11px] text-[#8df0c0] truncate">
+                  {cloudStatus === 'connecting' ? (
+                    <>
+                      <RefreshCw className="w-3 h-3 animate-spin shrink-0" />
+                      <span>Syncing…</span>
+                    </>
+                  ) : cloudStatus === 'error' ? (
+                    <>
+                      <CloudOff className="w-3 h-3 text-[#ff7d91] shrink-0" />
+                      <span className="text-[#ff7d91]">Sync paused</span>
+                    </>
+                  ) : (
+                    <>
+                      <Cloud className="w-3 h-3 shrink-0" />
+                      <span>Cloud synced</span>
+                    </>
+                  )}
+                </p>
               </div>
+              <button
+                type="button"
+                onClick={onSignOut}
+                disabled={authBusy}
+                title="Sign out"
+                aria-label="Sign out"
+                className="h-9 w-9 flex items-center justify-center rounded-lg text-[#8b9ab0] hover:text-[#ff7d91] hover:bg-white/[0.06] transition shrink-0"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
             </div>
           ) : (
-            <div className="rounded-xl glass-subcard p-3 space-y-2.5">
+            <div className="pt-3 border-t border-white/[0.08] space-y-2.5">
               <div className="flex items-center gap-2 text-xs font-semibold text-[#c9d4e7]">
                 <CloudOff className="w-4 h-4 text-[#8ebeff] shrink-0" />
                 <span>Local device mode</span>
               </div>
-              <p className="text-[11px] leading-relaxed text-[#7e8ea6]">
+              <p className="text-xs leading-relaxed text-[#7e8ea6]">
                 Sign in with Google to sync trades and screenshots privately across devices.
               </p>
               <button
                 type="button"
                 onClick={onSignIn}
                 disabled={authBusy}
-                className="w-full min-h-[38px] inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#47dca0]/15 border border-[#47dca0]/35 px-3 py-1.5 text-xs font-semibold text-[#8df0c0] hover:bg-[#47dca0]/25 disabled:opacity-50 transition"
+                className="w-full min-h-[40px] inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#47dca0]/15 border border-[#47dca0]/35 px-3 py-2 text-xs font-semibold text-[#8df0c0] hover:bg-[#47dca0]/25 disabled:opacity-50 transition"
               >
                 <LogIn className="w-3.5 h-3.5" />
                 <span>{authBusy ? 'Connecting…' : 'Sign in with Google'}</span>

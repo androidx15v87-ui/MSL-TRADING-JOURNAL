@@ -41,55 +41,12 @@ const PRESET_TAGS = [
   'News Volatility',
 ];
 
-const NUMBER_WORDS: Record<string, string> = {
-  zero: '0',
-  one: '1',
-  two: '2',
-  three: '3',
-  four: '4',
-  five: '5',
-  six: '6',
-  seven: '7',
-  eight: '8',
-  nine: '9',
-  ten: '10',
-  eleven: '11',
-  twelve: '12',
-  thirteen: '13',
-  fourteen: '14',
-  fifteen: '15',
-  sixteen: '16',
-  seventeen: '17',
-  eighteen: '18',
-  nineteen: '19',
-  twenty: '20',
-};
-
 function appendSpokenText(existing: string, spoken: string): string {
   const clean = spoken.trim();
   if (!clean) return existing;
   if (!existing.trim()) return clean;
   const needsSpace = !/\s$/.test(existing);
   return `${existing}${needsSpace ? ' ' : ''}${clean}`;
-}
-
-function extractSpokenNumber(spoken: string): string {
-  const direct = spoken.match(/-?\d+(?:[.,]\d+)?/);
-  if (direct) return direct[0].replace(',', '.');
-
-  let normalized = spoken.toLowerCase().trim();
-  const isNegative = /\b(minus|negative)\b/.test(normalized);
-  normalized = normalized.replace(/\b(minus|negative)\b/g, '').trim();
-  normalized = normalized.replace(/\b(point|dot)\b/g, '.');
-
-  const tokens = normalized.split(/\s+/);
-  const mapped = tokens
-    .map((tok) => (tok === '.' ? '.' : NUMBER_WORDS[tok] ?? tok))
-    .join('');
-
-  const match = mapped.match(/\d+(?:\.\d+)?/);
-  if (!match) return '';
-  return `${isNegative ? '-' : ''}${match[0]}`;
 }
 
 function normalizeTagLabel(raw: string): string {
@@ -167,71 +124,9 @@ export const TradeModal: React.FC<TradeModalProps> = ({
 
       if (fieldKey === 'tags') {
         addTagsFromString(transcript);
-        return;
-      }
-
-      if (fieldKey.startsWith('custom:')) {
-        const [, fieldId, subPart] = fieldKey.split(':');
-        const targetField = fields.find((f) => f.id === fieldId);
-        if (!targetField) return;
-
-        if (targetField.options.length > 0) {
-          const lower = transcript.trim().toLowerCase();
-          const matched = targetField.options.find(
-            (opt) =>
-              opt.toLowerCase() === lower ||
-              opt.toLowerCase().includes(lower) ||
-              lower.includes(opt.toLowerCase())
-          );
-          setCustom((prev) => ({
-            ...prev,
-            [fieldId]: matched || transcript.trim(),
-          }));
-          return;
-        }
-
-        if (targetField.type === 'number' || subPart === 'number') {
-          const parsed = extractSpokenNumber(transcript);
-          if (!parsed) {
-            onNotifyError(`Could not detect a number from "${transcript}".`);
-            return;
-          }
-          if (targetField.type === 'both') {
-            setCustom((prev) => {
-              const existing = prev[fieldId];
-              const obj =
-                typeof existing === 'object' && existing !== null
-                  ? { ...existing }
-                  : { text: typeof existing === 'string' ? existing : '', number: '' };
-              obj.number = parsed;
-              return { ...prev, [fieldId]: obj };
-            });
-          } else {
-            setCustom((prev) => ({ ...prev, [fieldId]: parsed }));
-          }
-          return;
-        }
-
-        if (targetField.type === 'both') {
-          setCustom((prev) => {
-            const existing = prev[fieldId];
-            const obj =
-              typeof existing === 'object' && existing !== null
-                ? { ...existing }
-                : { text: typeof existing === 'string' ? existing : '', number: '' };
-            obj.text = appendSpokenText(obj.text || '', transcript);
-            return { ...prev, [fieldId]: obj };
-          });
-          return;
-        }
-
-        setCustom((prev) => {
-          const prevStr = typeof prev[fieldId] === 'string' ? prev[fieldId] : '';
-          return { ...prev, [fieldId]: appendSpokenText(prevStr, transcript) };
-        });
       }
     },
-    [addTagsFromString, fields, onNotifyError]
+    [addTagsFromString]
   );
 
   const {
@@ -832,12 +727,9 @@ export const TradeModal: React.FC<TradeModalProps> = ({
             </div>
           </div>
 
-          {/* Dynamic Custom Properties with Voice-to-Text */}
+          {/* Dynamic Custom Properties */}
           {fields.length > 0 && (
             <div className="pt-2 border-t border-white/[0.08] space-y-3">
-              <p className="text-xs font-semibold text-[#8df0c0] tracking-wide uppercase">
-                Custom properties
-              </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 {fields.map((f) => {
                   const val = custom[f.id];
@@ -856,63 +748,51 @@ export const TradeModal: React.FC<TradeModalProps> = ({
                         </span>
 
                         {f.options.length > 0 ? (
-                          <div className="flex items-center gap-2">
-                            <select
-                              value={strVal}
-                              onChange={(e) => updateCustomText(f.id, e.target.value)}
-                              required={f.required}
-                              className="flex-1 min-w-0 min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb]"
-                            >
-                              <option value="">Choose…</option>
-                              {f.options.map((opt) => (
-                                <option key={opt} value={opt}>
-                                  {opt}
-                                </option>
-                              ))}
-                              {strVal && !f.options.includes(strVal) && (
-                                <option value={strVal}>{strVal}</option>
-                              )}
-                            </select>
-                            {renderMicButton(`custom:${f.id}`, f.name, true)}
-                          </div>
+                          <select
+                            value={strVal}
+                            onChange={(e) => updateCustomText(f.id, e.target.value)}
+                            required={f.required}
+                            className="w-full min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb]"
+                          >
+                            <option value="">Choose…</option>
+                            {f.options.map((opt) => (
+                              <option key={opt} value={opt}>
+                                {opt}
+                              </option>
+                            ))}
+                            {strVal && !f.options.includes(strVal) && (
+                              <option value={strVal}>{strVal}</option>
+                            )}
+                          </select>
                         ) : f.type === 'both' ? (
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="text"
-                                value={objVal.text || ''}
-                                onChange={(e) => updateCustomBoth(f.id, 'text', e.target.value)}
-                                placeholder={f.hint || 'Text value'}
-                                required={f.required}
-                                className="flex-1 min-w-0 min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb] placeholder:text-[#5b6b84]"
-                              />
-                              {renderMicButton(`custom:${f.id}:text`, `${f.name} text`, true)}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="number"
-                                step="any"
-                                value={objVal.number || ''}
-                                onChange={(e) => updateCustomBoth(f.id, 'number', e.target.value)}
-                                placeholder="Numeric value"
-                                className="flex-1 min-w-0 min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb] font-mono tabular-nums placeholder:text-[#5b6b84]"
-                              />
-                              {renderMicButton(`custom:${f.id}:number`, `${f.name} number`, true)}
-                            </div>
+                            <input
+                              type="text"
+                              value={objVal.text || ''}
+                              onChange={(e) => updateCustomBoth(f.id, 'text', e.target.value)}
+                              placeholder={f.hint || 'Text value'}
+                              required={f.required}
+                              className="w-full min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb] placeholder:text-[#5b6b84]"
+                            />
+                            <input
+                              type="number"
+                              step="any"
+                              value={objVal.number || ''}
+                              onChange={(e) => updateCustomBoth(f.id, 'number', e.target.value)}
+                              placeholder="Numeric value"
+                              className="w-full min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb] font-mono tabular-nums placeholder:text-[#5b6b84]"
+                            />
                           </div>
                         ) : (
-                          <div className="flex items-center gap-2">
-                            <input
-                              type={f.type === 'number' ? 'number' : 'text'}
-                              step={f.type === 'number' ? 'any' : undefined}
-                              value={strVal}
-                              onChange={(e) => updateCustomText(f.id, e.target.value)}
-                              placeholder={f.hint || 'Enter value'}
-                              required={f.required}
-                              className="flex-1 min-w-0 min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb] placeholder:text-[#5b6b84]"
-                            />
-                            {renderMicButton(`custom:${f.id}`, f.name, true)}
-                          </div>
+                          <input
+                            type={f.type === 'number' ? 'number' : 'text'}
+                            step={f.type === 'number' ? 'any' : undefined}
+                            value={strVal}
+                            onChange={(e) => updateCustomText(f.id, e.target.value)}
+                            placeholder={f.hint || 'Enter value'}
+                            required={f.required}
+                            className="w-full min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb] placeholder:text-[#5b6b84]"
+                          />
                         )}
                       </div>
                     </div>

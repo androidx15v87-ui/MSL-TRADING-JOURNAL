@@ -378,21 +378,40 @@ export function parseBackupFile(jsonText: string): JournalState {
  */
 export function compressImageFile(file: File): Promise<TradeScreenshot> {
   return new Promise((resolve, reject) => {
-    if (!file.type.startsWith('image/')) {
-      reject(new Error(`"${file.name}" is not an image file.`));
+    const fileName = file.name || 'chart.jpg';
+    const hasImageExt = /\.(png|jpe?g|webp|gif|bmp|avif|heic|heif|svg)$/i.test(fileName);
+    const hasEmptyOrGenericType =
+      !file.type || file.type === 'application/octet-stream';
+
+    if (!file.type.startsWith('image/') && !hasImageExt && !hasEmptyOrGenericType) {
+      reject(new Error(`"${fileName}" is not an image file.`));
       return;
     }
 
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`Could not read "${file.name}".`));
+    reader.onerror = () => reject(new Error(`Could not read "${fileName}".`));
     reader.onload = () => {
+      const resultStr = String(reader.result || '');
+      if (!resultStr) {
+        reject(new Error(`Could not read "${fileName}".`));
+        return;
+      }
+
       const img = new Image();
-      img.onerror = () => reject(new Error(`Could not decode "${file.name}".`));
+      img.onerror = () =>
+        reject(new Error(`Could not decode "${fileName}". Please choose a PNG, JPG, or WebP image.`));
       img.onload = () => {
+        const naturalW = img.naturalWidth || img.width;
+        const naturalH = img.naturalHeight || img.height;
+        if (!naturalW || !naturalH) {
+          reject(new Error(`"${fileName}" has invalid image dimensions.`));
+          return;
+        }
+
         const tryEncode = (maxEdge: number, quality: number): string => {
-          const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
-          const width = Math.max(1, Math.round(img.width * scale));
-          const height = Math.max(1, Math.round(img.height * scale));
+          const scale = Math.min(1, maxEdge / Math.max(naturalW, naturalH));
+          const width = Math.max(1, Math.round(naturalW * scale));
+          const height = Math.max(1, Math.round(naturalH * scale));
 
           const canvas = document.createElement('canvas');
           canvas.width = width;
@@ -406,13 +425,13 @@ export function compressImageFile(file: File): Promise<TradeScreenshot> {
         };
 
         try {
-          let dataUrl = tryEncode(1400, 0.8);
-          if (dataUrl.length > 680000) dataUrl = tryEncode(1200, 0.68);
-          if (dataUrl.length > 680000) dataUrl = tryEncode(960, 0.56);
+          let dataUrl = tryEncode(1400, 0.82);
+          if (dataUrl.length > 680000) dataUrl = tryEncode(1200, 0.7);
+          if (dataUrl.length > 680000) dataUrl = tryEncode(960, 0.58);
 
           resolve({
             id: generateId(),
-            name: (file.name || 'chart.jpg').slice(0, 160),
+            name: fileName.slice(0, 160),
             dataUrl,
             createdAt: new Date().toISOString(),
           });
@@ -420,7 +439,7 @@ export function compressImageFile(file: File): Promise<TradeScreenshot> {
           reject(err instanceof Error ? err : new Error('Failed to process image.'));
         }
       };
-      img.src = String(reader.result);
+      img.src = resultStr;
     };
     reader.readAsDataURL(file);
   });

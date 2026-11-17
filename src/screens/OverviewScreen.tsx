@@ -35,7 +35,7 @@ interface OverviewScreenProps {
   onSelectTrade: (trade: Trade) => void;
 }
 
-export const OverviewScreen: React.FC<OverviewScreenProps> = ({
+export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
   trades,
   alarms,
   quote,
@@ -124,7 +124,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
       <section className="relative overflow-hidden rounded-2xl glass-card p-5 sm:p-7">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
           <div className="lg:col-span-7 space-y-4">
-            <p className="text-[11px] font-semibold tracking-[0.16em] text-[#8df0c0] uppercase">
+            <p className="text-xs font-semibold text-[#8df0c0]">
               Your process · Your edge
             </p>
             <h2 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight text-[#eef3fb] leading-tight max-w-xl [text-wrap:balance]">
@@ -163,10 +163,10 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
 
           {/* Geometric Candlestick & Equity Trajectory Artwork */}
           <div className="hidden lg:flex lg:col-span-5 justify-end">
-            <div className="relative w-full max-w-[300px] h-44 rounded-2xl glass-subcard p-4 flex flex-col justify-between">
-              <div className="flex items-center justify-between text-[11px] text-[#7c8ca6] font-mono">
-                <span>EXECUTION RHYTHM</span>
-                <span className="text-[#47dca0] tabular-nums">{formatR(stats.netR)}</span>
+            <div className="relative w-full max-w-[300px] h-44 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4 flex flex-col justify-between">
+              <div className="flex items-center justify-between text-xs text-[#8b9ab0]">
+                <span className="font-medium">Execution rhythm</span>
+                <span className="font-mono font-semibold text-[#47dca0] tabular-nums">{formatR(stats.netR)}</span>
               </div>
               <svg viewBox="0 0 260 96" className="w-full h-24 overflow-visible" aria-hidden="true">
                 <line x1="0" y1="74" x2="260" y2="74" stroke="#1b283e" strokeWidth="1" />
@@ -212,8 +212,9 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
                   opacity="0.85"
                 />
               </svg>
-              <div className="text-[11px] text-[#7c8ca6]">
-                Read the market · Respect the plan
+              <div className="flex items-center justify-between text-xs text-[#8b9ab0] tabular-nums">
+                <span>{Math.round(stats.winRate)}% win rate</span>
+                <span>{stats.totalTrades} {stats.totalTrades === 1 ? 'trade' : 'trades'}</span>
               </div>
             </div>
           </div>
@@ -284,7 +285,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
       <section className="rounded-2xl glass-card p-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/[0.08]">
           <div>
-            <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+            <p className="text-xs font-medium text-[#8df0c0]">
               6-month growth
             </p>
             <h3 className="text-base font-bold text-[#eef3fb]">Monthly PnL summary (Net R)</h3>
@@ -411,7 +412,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
         <article className="lg:col-span-7 rounded-2xl glass-card p-5 flex flex-col">
           <div className="flex items-center justify-between gap-4 pb-4 border-b border-white/[0.08]">
             <div>
-              <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+              <p className="text-xs font-medium text-[#8df0c0]">
                 Latest log
               </p>
               <h3 className="text-base font-bold text-[#eef3fb]">Recent executions</h3>
@@ -428,11 +429,21 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
 
           <div className="mt-3 flex-1 divide-y divide-white/[0.06]">
             {recentTrades.length === 0 ? (
-              <div className="py-10 text-center space-y-2">
+              <div className="py-10 text-center space-y-3">
                 <p className="text-sm font-medium text-[#9aa8be]">Your trade history will appear here.</p>
                 <p className="text-xs text-[#6e7e98]">
                   Log your first execution to track R performance and statistics.
                 </p>
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={onOpenLogTrade}
+                    className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-[#47dca0] px-4 py-2 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] transition"
+                  >
+                    <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                    <span>Log first trade</span>
+                  </button>
+                </div>
               </div>
             ) : (
               recentTrades.map((t) => {
@@ -480,7 +491,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
 
         <article className="lg:col-span-5 rounded-2xl glass-card p-5 flex flex-col justify-between">
           <div>
-            <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+            <p className="text-xs font-medium text-[#8df0c0]">
               Daily focus
             </p>
             <h3 className="mt-0.5 text-base font-bold text-[#eef3fb]">Discipline reminder</h3>
@@ -491,7 +502,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
             <p className="mt-3 text-xs font-medium text-[#8b9ab0]">— {quote.source}</p>
 
             {topTagEdge && (
-              <div className="mt-4 rounded-xl glass-subcard px-3.5 py-2.5 flex items-center justify-between gap-2 text-xs">
+              <div className="mt-5 pt-3 border-t border-white/[0.08] flex items-center justify-between gap-2 text-xs">
                 <span className="text-[#8b9ab0]">Top label edge</span>
                 <span className="font-semibold text-[#eef3fb] tabular-nums">
                   #{topTagEdge.label}{' '}
@@ -530,7 +541,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
         <article className="rounded-2xl glass-card p-5">
           <div className="flex items-center justify-between gap-4 pb-3 border-b border-white/[0.08]">
             <div>
-              <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+              <p className="text-xs font-medium text-[#8df0c0]">
                 Next up
               </p>
               <h3 className="text-base font-bold text-[#eef3fb]">Session reminders</h3>
@@ -545,7 +556,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
             </button>
           </div>
 
-          <div className="mt-3 space-y-2.5">
+          <div className="mt-2 divide-y divide-white/[0.06]">
             {upcomingAlarms.length === 0 ? (
               <p className="py-6 text-sm text-[#7f8fa8]">
                 No session alarms enabled. Configure local reminders in Settings.
@@ -554,13 +565,13 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
               upcomingAlarms.map((a) => (
                 <div
                   key={a.id}
-                  className="flex items-center justify-between rounded-xl glass-subcard px-3.5 py-2.5"
+                  className="flex items-center justify-between py-3"
                 >
                   <div className="flex items-center gap-2.5">
-                    <Bell className="w-4 h-4 text-[#47dca0]" />
+                    <Bell className="w-4 h-4 text-[#47dca0] shrink-0" />
                     <div>
                       <p className="text-sm font-semibold text-[#eef3fb]">{a.name}</p>
-                      <p className="text-[11px] text-[#7c8ca6]">
+                      <p className="text-xs text-[#7c8ca6]">
                         {a.isToday ? 'Today · Device local time' : 'Tomorrow · Device local time'}
                       </p>
                     </div>
@@ -577,7 +588,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
         <article className="rounded-2xl glass-card p-5">
           <div className="flex items-center justify-between gap-4 pb-3 border-b border-white/[0.08]">
             <div>
-              <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+              <p className="text-xs font-medium text-[#8df0c0]">
                 This month
               </p>
               <h3 className="text-base font-bold text-[#eef3fb]">
@@ -626,4 +637,6 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
       </section>
     </div>
   );
-};
+});
+
+OverviewScreen.displayName = 'OverviewScreen';

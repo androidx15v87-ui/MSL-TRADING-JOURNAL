@@ -135,13 +135,90 @@ export interface AIChatAttachment {
   dataUrl: string;
 }
 
+export type AIAppAction =
+  | {
+      name: 'navigate_app';
+      args: { page: PageId };
+    }
+  | {
+      name: 'open_log_trade_modal';
+      args: { initialDate?: string };
+    }
+  | {
+      name: 'log_trade';
+      args: {
+        pair: string;
+        direction: Direction;
+        setup: SetupType;
+        session: SessionType;
+        result: TradeOutcome;
+        r: number;
+        risk?: number;
+        model?: string;
+        tags?: string[];
+        notes?: string;
+        date?: string;
+      };
+    }
+  | {
+      name: 'update_trade';
+      args: {
+        tradeId: string;
+        pair?: string;
+        direction?: Direction;
+        setup?: SetupType;
+        session?: SessionType;
+        result?: TradeOutcome;
+        r?: number;
+        risk?: number;
+        model?: string;
+        tags?: string[];
+        notes?: string;
+      };
+    }
+  | {
+      name: 'delete_trade';
+      args: { tradeId: string };
+    }
+  | {
+      name: 'create_trading_model';
+      args: { name: string; type: ModelType; entry: string; risk: string };
+    }
+  | {
+      name: 'update_playbook';
+      args: {
+        core?: string;
+        rev?: string;
+        cont?: string;
+        entry?: string;
+        risk?: string;
+      };
+    }
+  | {
+      name: 'update_session_alarm';
+      args: { name: string; time?: string; enabled?: boolean };
+    }
+  | {
+      name: 'cycle_motivational_quote';
+      args: Record<string, never>;
+    };
+
+export interface AIAppActionResult {
+  name: string;
+  label: string;
+  ok: boolean;
+}
+
 export interface AIChatMessage {
   id: string;
   role: 'user' | 'model';
   text: string;
   attachments?: AIChatAttachment[];
+  actions?: AIAppActionResult[];
   createdAt: string;
   error?: boolean;
+  interrupted?: boolean;
+  viaVoice?: boolean;
 }
 
 export interface AIConversation {
