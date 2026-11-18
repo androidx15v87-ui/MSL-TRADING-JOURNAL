@@ -122,8 +122,8 @@ export const Layout: React.FC<LayoutProps> = ({
             <span className="block font-display text-sm font-extrabold tracking-tight text-[#eef3fb] whitespace-nowrap">
               MSL Journal
             </span>
-            <span className="block text-[11px] text-[#8b9ab0] truncate">
-              {displayName ? `${displayName} · Version 10.2.1` : 'Version 10.2.1'}
+            <span className="block text-[11px] text-[#8b9ab0] truncate tabular-nums">
+              {displayName ? `${displayName} · Version 10.5.4` : 'Version 10.5.4'}
             </span>
           </span>
         </button>

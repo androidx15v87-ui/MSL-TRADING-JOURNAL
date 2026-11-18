@@ -201,7 +201,25 @@ export type AIAppAction =
   | {
       name: 'cycle_motivational_quote';
       args: Record<string, never>;
+    }
+  | {
+      name: 'save_memory';
+      args: { content: string; category?: AIMemoryCategory };
+    }
+  | {
+      name: 'forget_memory';
+      args: { memoryId?: string; query?: string };
     };
+
+export type AIMemoryCategory = 'preference' | 'rule' | 'goal' | 'context';
+
+export interface AIMemoryItem {
+  id: string;
+  content: string;
+  category: AIMemoryCategory;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface AIAppActionResult {
   name: string;

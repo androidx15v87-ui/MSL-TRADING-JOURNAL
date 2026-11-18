@@ -26,6 +26,7 @@ export const VALIDATION_LIMITS = {
   fieldMaxOptions: 30,
   fieldOptionMaxLength: 80,
   alarmNameMaxLength: 60,
+  memoryContentMaxLength: 600,
   rMin: -1000,
   rMax: 1000,
   riskMin: 0,

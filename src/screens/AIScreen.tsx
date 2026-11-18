@@ -1,9 +1,12 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
+  AudioWaveform,
   Bot,
+  Brain,
   Check,
   CheckCircle2,
+  Code,
   Copy,
   History,
   ImagePlus,
@@ -12,29 +15,33 @@ import {
   MessageSquarePlus,
   Mic,
   Minimize2,
+  Pause,
+  Pencil,
+  PhoneOff,
+  Play,
+  Plus,
   RotateCcw,
   Send,
   Sparkles,
   Square,
   Trash2,
   Volume2,
-  VolumeX,
   WifiOff,
   X,
   Zap,
 } from 'lucide-react';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
-import { useVoiceDictation } from '../hooks/useVoiceDictation';
+import { type DictationTurnOutcome, useVoiceDictation } from '../hooks/useVoiceDictation';
 import {
   StreamInterruptedError,
   StreamingVoiceEngine,
   buildJournalContext,
   extractSpeakableClauses,
   loadAIConversations,
-  loadAIVoiceEnabled,
+  loadVoiceRate,
+  prewarmAIConnection,
   saveAIConversations,
-  saveAIVoiceEnabled,
   scheduleSaveAIConversations,
   streamAIChat,
 } from '../lib/aiClient';
@@ -46,11 +53,16 @@ import type {
   AIChatAttachment,
   AIChatMessage,
   AIConversation,
+  AIMemoryCategory,
+  AIMemoryItem,
   JournalState,
 } from '../types/journal';
 
 interface AIScreenProps {
   journalState: JournalState;
+  memories?: AIMemoryItem[];
+  onAddMemory?: (content: string, category: AIMemoryCategory) => Promise<void> | void;
+  onDeleteMemory?: (id: string) => Promise<void> | void;
   onExecuteAIActions?: (actions: AIAppAction[]) => Promise<AIAppActionResult[]> | AIAppActionResult[];
 }
 
@@ -63,20 +75,20 @@ interface LiveStreamState {
 
 const STARTER_PROMPTS = [
   {
-    title: 'Audit my trading edge',
-    prompt: 'Analyze my recent trades, win rate, and expectancy. Where is my biggest leak right now?',
+    title: 'Total PnL & edge audit',
+    prompt: 'Break down my Total PnL, Total Profits, Total Losses, win rate, and expectancy. Where is my biggest edge or leak?',
   },
   {
     title: 'Log a trade via AI',
     prompt: 'Log a +2.5R Long Win on XAUUSD during London session using Reversal setup with tag A+ Setup.',
   },
   {
-    title: 'Setup & session breakdown',
-    prompt: 'Compare my performance across setups and trading sessions. Which combination should I focus on?',
+    title: 'First-principles market brief',
+    prompt: 'Explain how central bank liquidity, yield spreads, and dollar flows drive gold and major FX pairs from first principles.',
   },
   {
     title: 'App & playbook control',
-    prompt: 'Open Analytics for me, and suggest one improvement to my Playbook entry filters.',
+    prompt: 'Open Analytics for me, and suggest one high-impact refinement to my Playbook entry filters.',
   },
 ];
 
@@ -94,11 +106,18 @@ interface MessageBubbleProps {
   displayText: string;
   displayActions?: AIAppActionResult[];
   isStreamingThis: boolean;
+  isAnyStreaming: boolean;
   streamStatus: string | null;
   aiMode: 'fast' | 'deep';
   copiedId: string | null;
   voiceState: 'idle' | 'loading' | 'speaking';
   activeSpeechMsgId: string | null;
+  isEditing: boolean;
+  editDraft: string;
+  onEditDraftChange: (val: string) => void;
+  onStartEdit: (msgId: string, currentText: string) => void;
+  onCancelEdit: () => void;
+  onSaveEdit: (msgId: string) => void;
   onCopy: (msgId: string, text: string) => void;
   onRetry: (msgId: string) => void;
   onSpeakToggle: (msgId: string, text: string) => void;
@@ -111,11 +130,18 @@ const MessageBubble = memo<MessageBubbleProps>(
     displayText,
     displayActions,
     isStreamingThis,
+    isAnyStreaming,
     streamStatus,
     aiMode,
     copiedId,
     voiceState,
     activeSpeechMsgId,
+    isEditing,
+    editDraft,
+    onEditDraftChange,
+    onStartEdit,
+    onCancelEdit,
+    onSaveEdit,
     onCopy,
     onRetry,
     onSpeakToggle,
@@ -131,113 +157,228 @@ const MessageBubble = memo<MessageBubbleProps>(
     const isLoadingSpeechForThis = activeSpeechMsgId === msg.id && voiceState === 'loading';
     const isSpeakingThis = activeSpeechMsgId === msg.id && voiceState === 'speaking';
 
+    if (isUser) {
+      return (
+        <div className="perf-row flex flex-col items-end gap-1.5 group">
+          <div className="max-w-[92%] sm:max-w-[78%] rounded-2xl liquid-glass px-4 py-3 text-[#eef3fb] w-auto">
+            {validAttachments.length > 0 && (
+              <div className="mb-2.5 flex flex-wrap gap-2">
+                {validAttachments.map((att) => (
+                  <button
+                    key={att.id}
+                    type="button"
+                    onClick={() => onOpenImage({ src: att.dataUrl, name: att.name })}
+                    className="group/img relative h-24 w-36 rounded-xl overflow-hidden border border-white/[0.15] hover:border-[#47dca0]/60 transition"
+                    aria-label={`View ${att.name}`}
+                  >
+                    <img
+                      src={att.dataUrl}
+                      alt={att.name}
+                      loading="lazy"
+                      decoding="async"
+                      referrerPolicy="no-referrer"
+                      className="h-full w-full object-cover group-hover/img:scale-[1.03] transition-transform duration-150"
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {isEditing ? (
+              <div className="space-y-2.5 min-w-[250px] sm:min-w-[360px]">
+                <textarea
+                  rows={4}
+                  value={editDraft}
+                  onChange={(e) => onEditDraftChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e') {
+                      e.preventDefault();
+                      const el = e.currentTarget;
+                      const start = el.selectionStart ?? editDraft.length;
+                      const end = el.selectionEnd ?? editDraft.length;
+                      const selected = editDraft.slice(start, end) || 'code';
+                      const multiline = selected.includes('\n');
+                      const wrapped = multiline ? `\`\`\`\n${selected}\n\`\`\`` : `\`${selected}\``;
+                      const pad = multiline ? 4 : 1;
+                      const updated = `${editDraft.slice(0, start)}${wrapped}${editDraft.slice(end)}`;
+                      onEditDraftChange(updated);
+                      window.requestAnimationFrame(() => {
+                        el.focus();
+                        el.setSelectionRange(start + pad, start + pad + selected.length);
+                      });
+                    } else if (!e.shiftKey && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      if (editDraft.trim() && !isAnyStreaming) onSaveEdit(msg.id);
+                    }
+                  }}
+                  autoFocus
+                  placeholder="Edit your query… (Shift+Enter for new paragraph)"
+                  className="w-full rounded-xl glass-input px-3 py-2.5 text-sm text-[#eef3fb] leading-relaxed resize-y focus:outline-none"
+                />
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-[#7f8fa8]">Shift+Enter · new paragraph</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={onCancelEdit}
+                      className="min-h-[34px] rounded-lg glass-subcard px-3 py-1 text-xs font-semibold text-[#9aa8be] hover:text-[#eef3fb] transition"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onSaveEdit(msg.id)}
+                      disabled={!editDraft.trim() || isAnyStreaming}
+                      className="min-h-[34px] inline-flex items-center gap-1.5 rounded-lg bg-[#47dca0] px-3.5 py-1 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] disabled:opacity-45 transition"
+                    >
+                      <Send className="w-3 h-3" />
+                      <span>Save &amp; Resend</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div>
+                {msg.viaVoice && (
+                  <div className="mb-1 inline-flex items-center gap-1 text-[11px] font-medium text-[#8df0c0]/85">
+                    <Mic className="w-3 h-3" />
+                    <span>Voice</span>
+                  </div>
+                )}
+                <MarkdownRenderer content={displayText} />
+              </div>
+            )}
+          </div>
+
+          {!isEditing && !isAnyStreaming && (
+            <div className="flex items-center gap-1.5 pr-1 opacity-85 hover:opacity-100 transition-opacity">
+              <button
+                type="button"
+                onClick={() => onStartEdit(msg.id, displayText)}
+                className="min-h-[30px] inline-flex items-center gap-1.5 rounded-lg glass-subcard px-2.5 py-1 text-[11px] font-semibold text-[#b8c6db] hover:text-[#8df0c0] hover:border-[#47dca0]/40 transition"
+                aria-label="Edit and resend query"
+              >
+                <Pencil className="w-3 h-3 text-[#8df0c0]" />
+                <span>Edit</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onCopy(msg.id, displayText)}
+                className="min-h-[30px] inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-[#8b9ab0] hover:text-[#eef3fb] hover:bg-white/[0.06] transition"
+                aria-label="Copy message"
+              >
+                {copiedId === msg.id ? (
+                  <>
+                    <Check className="w-3 h-3 text-[#47dca0]" />
+                    <span>Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3" />
+                    <span>Copy</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Grok-style open, airy editorial response directly on the canvas
     return (
-      <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div className="perf-row flex justify-start">
         <div
-          className={`max-w-[94%] sm:max-w-[82%] rounded-2xl px-4 py-3 ${
-            isUser
-              ? 'bg-[#47dca0]/14 border border-[#47dca0]/30 text-[#eef3fb]'
-              : msg.error
-              ? 'bg-[#ff7d91]/10 border border-[#ff7d91]/35 text-[#ffb4bf]'
-              : 'bg-white/[0.035] border border-white/[0.08] text-[#e1e9f5]'
+          className={`w-full rounded-2xl transition-colors ${
+            msg.error
+              ? 'bg-[#ff7d91]/10 border border-[#ff7d91]/35 px-4 py-3.5 text-[#ffb4bf]'
+              : 'px-1 sm:px-2 py-1 text-[#e4ecf8]'
           }`}
         >
-          {!isUser && (
-            <div className="flex items-center justify-between gap-4 pb-1.5 mb-2 border-b border-white/[0.07]">
-              <span className="text-xs font-semibold text-[#8df0c0]">MSL AI</span>
-              <div className="flex items-center gap-3">
-                {!isStreamingThis && (
-                  <button
-                    type="button"
-                    onClick={() => onRetry(msg.id)}
-                    className={`inline-flex items-center gap-1 text-xs font-semibold transition ${
-                      msg.error || msg.interrupted
-                        ? 'text-[#eef3fb] hover:text-[#47dca0]'
-                        : 'text-[#8b9ab0] hover:text-[#eef3fb]'
-                    }`}
-                    aria-label="Retry response"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    <span>Retry</span>
-                  </button>
-                )}
-
-                {displayText && !msg.error && !isStreamingThis && (
-                  <button
-                    type="button"
-                    onClick={() => onSpeakToggle(msg.id, displayText)}
-                    className={`inline-flex items-center gap-1 text-xs transition ${
-                      isSpeechForThis
-                        ? 'text-[#8df0c0] font-semibold'
-                        : 'text-[#8b9ab0] hover:text-[#eef3fb]'
-                    }`}
-                    aria-label={isSpeechForThis ? 'Stop voice' : 'Speak response'}
-                  >
-                    {isLoadingSpeechForThis ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin text-[#47dca0]" />
-                        <span>Voice…</span>
-                      </>
-                    ) : isSpeakingThis ? (
-                      <>
-                        <Square className="w-3 h-3 fill-current text-[#8df0c0]" />
-                        <span>Stop</span>
-                      </>
-                    ) : (
-                      <>
-                        <Volume2 className="w-3 h-3" />
-                        <span>Speak</span>
-                      </>
-                    )}
-                  </button>
-                )}
-
-                {displayText && !isStreamingThis && (
-                  <button
-                    type="button"
-                    onClick={() => onCopy(msg.id, displayText)}
-                    className="inline-flex items-center gap-1 text-xs text-[#8b9ab0] hover:text-[#eef3fb] transition"
-                    aria-label="Copy response"
-                  >
-                    {copiedId === msg.id ? (
-                      <>
-                        <Check className="w-3 h-3 text-[#47dca0]" />
-                        <span>Copied</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3 h-3" />
-                        <span>Copy</span>
-                      </>
-                    )}
-                  </button>
-                )}
+          <div className="flex items-center justify-between gap-4 pb-2 mb-3 border-b border-white/[0.08]">
+            <div className="flex items-center gap-2">
+              <div className="h-5 w-5 rounded-md bg-[#47dca0]/15 border border-[#47dca0]/35 flex items-center justify-center text-[#8df0c0]">
+                <Bot className="w-3.5 h-3.5" />
               </div>
+              <span className="text-xs font-semibold text-[#eef3fb]">MSL AI</span>
+              {isSpeechForThis && (
+                <span className="text-[11px] font-medium text-[#8df0c0]">
+                  · UK Voice
+                </span>
+              )}
             </div>
-          )}
 
-          {validAttachments.length > 0 && (
-            <div className="mb-2.5 flex flex-wrap gap-2">
-              {validAttachments.map((att) => (
+            <div className="flex items-center gap-3">
+              {!isStreamingThis && (
                 <button
-                  key={att.id}
                   type="button"
-                  onClick={() => onOpenImage({ src: att.dataUrl, name: att.name })}
-                  className="group relative h-24 w-36 rounded-xl overflow-hidden border border-white/[0.15] hover:border-[#47dca0]/60 transition"
-                  aria-label={`View ${att.name}`}
+                  onClick={() => onRetry(msg.id)}
+                  className={`inline-flex items-center gap-1 text-xs font-semibold transition ${
+                    msg.error || msg.interrupted
+                      ? 'text-[#eef3fb] hover:text-[#47dca0]'
+                      : 'text-[#8b9ab0] hover:text-[#eef3fb]'
+                  }`}
+                  aria-label="Retry response"
                 >
-                  <img
-                    src={att.dataUrl}
-                    alt={att.name}
-                    referrerPolicy="no-referrer"
-                    className="h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-150"
-                  />
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Retry</span>
                 </button>
-              ))}
-            </div>
-          )}
+              )}
 
-          {!isUser && displayActions && displayActions.length > 0 && (
+              {displayText && !msg.error && !isStreamingThis && (
+                <button
+                  type="button"
+                  onClick={() => onSpeakToggle(msg.id, displayText)}
+                  className={`inline-flex items-center gap-1 text-xs transition ${
+                    isSpeechForThis
+                      ? 'text-[#8df0c0] font-semibold'
+                      : 'text-[#8b9ab0] hover:text-[#eef3fb]'
+                  }`}
+                  aria-label={isSpeechForThis ? 'Stop voice' : 'Speak response'}
+                >
+                  {isLoadingSpeechForThis ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin text-[#47dca0]" />
+                      <span>Voice…</span>
+                    </>
+                  ) : isSpeakingThis ? (
+                    <>
+                      <Square className="w-3 h-3 fill-current text-[#8df0c0]" />
+                      <span>Stop</span>
+                    </>
+                  ) : (
+                    <>
+                      <Volume2 className="w-3 h-3" />
+                      <span>Speak</span>
+                    </>
+                  )}
+                </button>
+              )}
+
+              {displayText && !isStreamingThis && (
+                <button
+                  type="button"
+                  onClick={() => onCopy(msg.id, displayText)}
+                  className="inline-flex items-center gap-1 text-xs text-[#8b9ab0] hover:text-[#eef3fb] transition"
+                  aria-label="Copy response"
+                >
+                  {copiedId === msg.id ? (
+                    <>
+                      <Check className="w-3 h-3 text-[#47dca0]" />
+                      <span>Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3" />
+                      <span>Copy</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {displayActions && displayActions.length > 0 && (
             <div className="mb-2.5 pb-2 border-b border-white/[0.07] space-y-1">
               {displayActions.map((act, idx) => (
                 <div
@@ -257,23 +398,17 @@ const MessageBubble = memo<MessageBubbleProps>(
             </div>
           )}
 
-          {isUser ? (
-            <div>
-              {msg.viaVoice && (
-                <div className="mb-1 inline-flex items-center gap-1 text-[11px] font-medium text-[#8df0c0]/85">
-                  <Mic className="w-3 h-3" />
-                  <span>Voice note</span>
-                </div>
-              )}
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">{displayText}</p>
-            </div>
-          ) : displayText ? (
+          {displayText ? (
             <div>
               <MarkdownRenderer content={displayText} />
               {isStreamingThis && (
                 <div className="mt-2 inline-flex items-center gap-1.5 text-xs text-[#8df0c0]/85">
                   <Loader2 className="w-3 h-3 animate-spin" />
-                  <span>Streaming live…</span>
+                  <span>
+                    {voiceState === 'speaking'
+                      ? 'Speaking & generating in sync…'
+                      : 'Streaming live…'}
+                  </span>
                 </div>
               )}
               {!isStreamingThis && (msg.interrupted || msg.error) && (
@@ -301,7 +436,7 @@ const MessageBubble = memo<MessageBubbleProps>(
                 {isStreamingThis
                   ? streamStatus ||
                     (aiMode === 'deep'
-                      ? 'Analyzing edge & journal context…'
+                      ? 'Deep reasoning across markets & journal…'
                       : 'Generating response…')
                   : 'Thinking…'}
               </span>
@@ -315,8 +450,98 @@ const MessageBubble = memo<MessageBubbleProps>(
 
 MessageBubble.displayName = 'MessageBubble';
 
-export const AIScreen: React.FC<AIScreenProps> = ({
+interface ChatMessageListProps {
+  messages: AIChatMessage[];
+  activeConvId?: string;
+  liveStream: LiveStreamState | null;
+  isStreaming: boolean;
+  streamStatus: string | null;
+  aiMode: 'fast' | 'deep';
+  copiedId: string | null;
+  voiceState: 'idle' | 'loading' | 'speaking';
+  activeSpeechMsgId: string | null;
+  editingMsgId: string | null;
+  editDraft: string;
+  onEditDraftChange: (val: string) => void;
+  onStartEdit: (msgId: string, currentText: string) => void;
+  onCancelEdit: () => void;
+  onSaveEdit: (msgId: string) => void;
+  onCopy: (msgId: string, text: string) => void;
+  onRetry: (msgId: string) => void;
+  onSpeakToggle: (msgId: string, text: string) => void;
+  onOpenImage: (att: { src: string; name: string }) => void;
+}
+
+const ChatMessageList = memo<ChatMessageListProps>(
+  ({
+    messages,
+    activeConvId,
+    liveStream,
+    isStreaming,
+    streamStatus,
+    aiMode,
+    copiedId,
+    voiceState,
+    activeSpeechMsgId,
+    editingMsgId,
+    editDraft,
+    onEditDraftChange,
+    onStartEdit,
+    onCancelEdit,
+    onSaveEdit,
+    onCopy,
+    onRetry,
+    onSpeakToggle,
+    onOpenImage,
+  }) => (
+    <>
+      {messages.map((msg) => {
+        const isStreamingThis = Boolean(
+          isStreaming &&
+            liveStream &&
+            liveStream.convId === activeConvId &&
+            liveStream.msgId === msg.id
+        );
+        const displayText = isStreamingThis ? liveStream!.text : msg.text;
+        const displayActions = isStreamingThis ? liveStream!.actions : msg.actions;
+
+        return (
+          <MessageBubble
+            key={msg.id}
+            msg={msg}
+            displayText={displayText}
+            displayActions={displayActions}
+            isStreamingThis={isStreamingThis}
+            isAnyStreaming={isStreaming}
+            streamStatus={isStreamingThis ? streamStatus : null}
+            aiMode={aiMode}
+            copiedId={copiedId}
+            voiceState={voiceState}
+            activeSpeechMsgId={activeSpeechMsgId}
+            isEditing={editingMsgId === msg.id}
+            editDraft={editingMsgId === msg.id ? editDraft : ''}
+            onEditDraftChange={onEditDraftChange}
+            onStartEdit={onStartEdit}
+            onCancelEdit={onCancelEdit}
+            onSaveEdit={onSaveEdit}
+            onCopy={onCopy}
+            onRetry={onRetry}
+            onSpeakToggle={onSpeakToggle}
+            onOpenImage={onOpenImage}
+          />
+        );
+      })}
+    </>
+  )
+);
+
+ChatMessageList.displayName = 'ChatMessageList';
+
+export const AIScreen: React.FC<AIScreenProps> = memo(({
   journalState,
+  memories = [],
+  onAddMemory,
+  onDeleteMemory,
   onExecuteAIActions,
 }) => {
   const isOnline = useOnlineStatus();
@@ -334,8 +559,22 @@ export const AIScreen: React.FC<AIScreenProps> = ({
   const [addingImage, setAddingImage] = useState(false);
   const [isDraggingImage, setIsDraggingImage] = useState(false);
   const [syncContext, setSyncContext] = useState(true);
-  const [aiVoiceEnabled, setAiVoiceEnabled] = useState<boolean>(() => loadAIVoiceEnabled());
   const [aiMode, setAiMode] = useState<'fast' | 'deep'>('fast');
+
+  // Memory drawer state
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [newMemoryText, setNewMemoryText] = useState('');
+  const [newMemoryCategory, setNewMemoryCategory] = useState<AIMemoryCategory>('preference');
+
+  // Inline Edit User Message state
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState('');
+
+  // Streamlined Hands-Free UK Voice Conversation state
+  const [voiceChatActive, setVoiceChatActive] = useState(false);
+  const [voicePaused, setVoicePaused] = useState(false);
+  const [voiceDraft, setVoiceDraft] = useState<string | null>(null);
+  const [liveCapturedText, setLiveCapturedText] = useState('');
 
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
@@ -350,28 +589,60 @@ export const AIScreen: React.FC<AIScreenProps> = ({
   const [attachError, setAttachError] = useState<string | null>(null);
   const [lightboxImage, setLightboxImage] = useState<{ src: string; name: string } | null>(null);
 
+  const isTouchDevice = useMemo(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return false;
+    return window.matchMedia('(pointer: coarse)').matches;
+  }, []);
+
   const abortRef = useRef<AbortController | null>(null);
   const voiceEngineRef = useRef<StreamingVoiceEngine | null>(null);
-  const aiVoiceEnabledRef = useRef(aiVoiceEnabled);
-  aiVoiceEnabledRef.current = aiVoiceEnabled;
+  const voiceChatActiveRef = useRef(voiceChatActive);
+  voiceChatActiveRef.current = voiceChatActive;
+  const voicePausedRef = useRef(voicePaused);
+  voicePausedRef.current = voicePaused;
+  const voiceDraftRef = useRef(voiceDraft);
+  voiceDraftRef.current = voiceDraft;
+  const isStreamingRef = useRef(isStreaming);
+  isStreamingRef.current = isStreaming;
   const usedVoiceNoteRef = useRef(false);
+  const liveVoiceBufferRef = useRef('');
+  const pauseToEditRequestedRef = useRef(false);
+  const bargeInTriggeredRef = useRef(false);
+  const activeFieldRef = useRef<string | null>(null);
+  const handleSendRef = useRef<
+    ((overrideText?: string, meta?: { viaVoice?: boolean }) => Promise<void>) | null
+  >(null);
+  const armLiveVoiceTurnRef = useRef<() => void>(() => {});
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
 
   const streamTextRef = useRef('');
+  const syncDisplayTextRef = useRef('');
+  const bypassSyncRevealRef = useRef(false);
   const streamActionsRef = useRef<AIAppActionResult[]>([]);
   const rafIdRef = useRef<number | null>(null);
 
   const scrollEndRef = useRef<HTMLDivElement | null>(null);
   const messagesViewportRef = useRef<HTMLDivElement | null>(null);
+  const scrollRafRef = useRef<number | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const executeActionsRef = useRef(onExecuteAIActions);
   executeActionsRef.current = onExecuteAIActions;
 
-  const handleVoiceFinalText = useCallback((_fieldKey: string, transcript: string) => {
+  const handleVoiceFinalText = useCallback((fieldKey: string, transcript: string) => {
     const clean = transcript.trim();
     if (!clean) return;
+
+    if (fieldKey === 'ai-live-voice') {
+      const nextBuf = liveVoiceBufferRef.current
+        ? `${liveVoiceBufferRef.current} ${clean}`
+        : clean;
+      liveVoiceBufferRef.current = nextBuf;
+      setLiveCapturedText(nextBuf);
+      return;
+    }
+
     usedVoiceNoteRef.current = true;
     setInput((prev) => {
       if (!prev.trim()) return clean;
@@ -380,24 +651,110 @@ export const AIScreen: React.FC<AIScreenProps> = ({
     });
   }, []);
 
+  const handleTurnComplete = useCallback(
+    (fieldKey: string, finalText: string, outcome: DictationTurnOutcome) => {
+      if (fieldKey !== 'ai-live-voice') return;
+      liveVoiceBufferRef.current = '';
+      setLiveCapturedText('');
+
+      const openEditor = pauseToEditRequestedRef.current;
+      pauseToEditRequestedRef.current = false;
+
+      if (!voiceChatActiveRef.current || outcome === 'cancelled') {
+        return;
+      }
+
+      const spoken = finalText.trim();
+      if (openEditor) {
+        setVoicePaused(true);
+        voicePausedRef.current = true;
+        setVoiceDraft((prev) => (prev ? `${prev} ${spoken}`.trim() : spoken));
+        return;
+      }
+
+      // Immediately dispatch spoken utterance (never relies on deferred React useEffect batching)
+      if (spoken && !isStreamingRef.current) {
+        void handleSendRef.current?.(spoken, { viaVoice: true });
+        return;
+      }
+
+      // Empty/no-speech (or transient online error) turn: stay live and re-arm listening immediately
+      if (
+        voiceChatActiveRef.current &&
+        !voicePausedRef.current &&
+        !isStreamingRef.current &&
+        voiceDraftRef.current === null &&
+        (typeof navigator === 'undefined' || navigator.onLine !== false)
+      ) {
+        const delayMs = outcome === 'error' ? 350 : 65;
+        window.setTimeout(() => {
+          armLiveVoiceTurnRef.current();
+        }, delayMs);
+      }
+    },
+    []
+  );
+
+  const handleBargeInDetected = useCallback(() => {
+    if (!voiceChatActiveRef.current) return;
+    bargeInTriggeredRef.current = true;
+    bypassSyncRevealRef.current = true;
+    voiceEngineRef.current?.stop();
+    setVoiceState('idle');
+    setActiveSpeechMsgId(null);
+    setVoicePaused(false);
+    voicePausedRef.current = false;
+    setVoiceDraft(null);
+    liveVoiceBufferRef.current = '';
+    setLiveCapturedText('');
+    pauseToEditRequestedRef.current = false;
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+  }, []);
+
   const handleVoiceError = useCallback((msg: string) => {
     setAttachError(msg);
+    const isHardHardwareError =
+      /blocked|permission|not supported|No microphone|Unable to access microphone/i.test(msg);
+    if (voiceChatActiveRef.current && isHardHardwareError) {
+      setVoiceChatActive(false);
+    }
   }, []);
 
   const {
+    activeField,
     interimText,
     isListening,
     isTranscribing,
     toggleField,
+    setBargeInMonitoring,
     stop: stopVoice,
   } = useVoiceDictation({
     onFinalText: handleVoiceFinalText,
+    onTurnComplete: handleTurnComplete,
+    onBargeInDetected: handleBargeInDetected,
     onError: handleVoiceError,
   });
+  activeFieldRef.current = activeField;
+
+  const shouldMonitorBargeIn =
+    voiceChatActive &&
+    !voicePaused &&
+    voiceDraft === null &&
+    activeField === null &&
+    (isStreaming || voiceState === 'loading' || voiceState === 'speaking');
+
+  useEffect(() => {
+    setBargeInMonitoring(shouldMonitorBargeIn);
+  }, [setBargeInMonitoring, shouldMonitorBargeIn]);
 
   const activeConversation = useMemo(() => {
     return conversations.find((c) => c.id === activeId) || conversations[0];
   }, [conversations, activeId]);
+  const activeConversationRef = useRef(activeConversation);
+  activeConversationRef.current = activeConversation;
 
   const messages = activeConversation?.messages || [];
 
@@ -407,7 +764,6 @@ export const AIScreen: React.FC<AIScreenProps> = ({
     }
   }, [activeId, conversations]);
 
-  // Debounced persistence so localStorage never blocks frames during chat updates
   useEffect(() => {
     scheduleSaveAIConversations(conversations, 350);
   }, [conversations]);
@@ -421,7 +777,6 @@ export const AIScreen: React.FC<AIScreenProps> = ({
     };
   }, []);
 
-  // Initialize gapless streaming UK voice engine once
   useEffect(() => {
     const engine = new StreamingVoiceEngine(({ loading, speaking }) => {
       if (speaking) {
@@ -433,6 +788,7 @@ export const AIScreen: React.FC<AIScreenProps> = ({
         setActiveSpeechMsgId(null);
       }
     });
+    engine.setSpeechRate(loadVoiceRate());
     voiceEngineRef.current = engine;
     return () => {
       engine.dispose();
@@ -441,44 +797,56 @@ export const AIScreen: React.FC<AIScreenProps> = ({
   }, []);
 
   const stopVoicePlayback = useCallback(() => {
+    bypassSyncRevealRef.current = true;
     voiceEngineRef.current?.stop();
     setVoiceState('idle');
     setActiveSpeechMsgId(null);
+    if (isStreamingRef.current && streamTextRef.current) {
+      setLiveStream((prev) =>
+        prev
+          ? {
+              ...prev,
+              text: streamTextRef.current,
+              actions: [...streamActionsRef.current],
+            }
+          : prev
+      );
+    }
   }, []);
 
-  const toggleAiVoice = useCallback(() => {
-    setAiVoiceEnabled((prev) => {
-      const next = !prev;
-      aiVoiceEnabledRef.current = next;
-      saveAIVoiceEnabled(next);
-      if (!next) {
-        stopVoicePlayback();
-      } else {
-        voiceEngineRef.current?.unlock();
-      }
-      return next;
-    });
-  }, [stopVoicePlayback]);
-
-  // Smart auto-scroll: follow stream smoothly unless user scrolled up to read earlier messages
   useEffect(() => {
-    const viewport = messagesViewportRef.current;
-    if (!viewport) return;
-    const distanceFromBottom =
-      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-    if (distanceFromBottom < 140 || !isStreaming) {
-      scrollEndRef.current?.scrollIntoView({
-        behavior: isStreaming ? 'auto' : 'smooth',
-        block: 'end',
-      });
-    }
+    prewarmAIConnection();
+  }, []);
+
+  // rAF-throttled smart auto-scroll to eliminate forced synchronous reflows per token
+  useEffect(() => {
+    if (scrollRafRef.current !== null) return;
+    scrollRafRef.current = window.requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      const viewport = messagesViewportRef.current;
+      if (!viewport) return;
+      const distanceFromBottom =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+      if (distanceFromBottom < 140 || !isStreaming) {
+        scrollEndRef.current?.scrollIntoView({
+          behavior: isStreaming ? 'auto' : 'smooth',
+          block: 'end',
+        });
+      }
+    });
+    return () => {
+      if (scrollRafRef.current !== null) {
+        window.cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+    };
   }, [messages.length, liveStream?.text, isStreaming]);
 
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 144)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input]);
 
   useEffect(() => {
@@ -502,8 +870,8 @@ export const AIScreen: React.FC<AIScreenProps> = ({
   }, [isFullScreen, lightboxImage]);
 
   const journalSnapshot = useMemo(
-    () => (syncContext ? buildJournalContext(journalState) : undefined),
-    [syncContext, journalState]
+    () => (syncContext ? buildJournalContext(journalState, memories) : undefined),
+    [syncContext, journalState, memories]
   );
 
   const processImageFiles = useCallback(async (files: File[]) => {
@@ -559,10 +927,33 @@ export const AIScreen: React.FC<AIScreenProps> = ({
     }
   };
 
+  const applyCodeFormat = useCallback(() => {
+    const el = textareaRef.current;
+    const start = el ? (el.selectionStart ?? input.length) : input.length;
+    const end = el ? (el.selectionEnd ?? input.length) : input.length;
+    const selected = input.slice(start, end);
+    const inner = selected || 'code';
+    const isMultiline = inner.includes('\n');
+    const wrapped = isMultiline ? `\`\`\`\n${inner}\n\`\`\`` : `\`${inner}\``;
+    const pad = isMultiline ? 4 : 1;
+
+    const nextVal = `${input.slice(0, start)}${wrapped}${input.slice(end)}`;
+    setInput(nextVal);
+    if (el) {
+      window.requestAnimationFrame(() => {
+        el.focus();
+        el.setSelectionRange(start + pad, start + pad + inner.length);
+      });
+    }
+  }, [input]);
+
   const handleNewChat = () => {
     if (isStreaming) return;
+    setVoiceChatActive(false);
+    stopVoice(true);
     stopVoicePlayback();
     usedVoiceNoteRef.current = false;
+    setEditingMsgId(null);
     const empty = createEmptyConversation();
     setConversations((prev) => [empty, ...prev]);
     setActiveId(empty.id);
@@ -580,6 +971,8 @@ export const AIScreen: React.FC<AIScreenProps> = ({
       setLiveStream(null);
     }
     if (id === activeConversation?.id) {
+      setVoiceChatActive(false);
+      stopVoice(true);
       stopVoicePlayback();
     }
     setConversations((prev) => {
@@ -607,6 +1000,9 @@ export const AIScreen: React.FC<AIScreenProps> = ({
         stopVoicePlayback();
         return;
       }
+      if (isListening) {
+        stopVoice(true);
+      }
       const engine = voiceEngineRef.current;
       if (!engine || !text.trim()) return;
       const session = engine.beginSession();
@@ -616,7 +1012,7 @@ export const AIScreen: React.FC<AIScreenProps> = ({
         engine.enqueueClause(clause, session);
       }
     },
-    [activeSpeechMsgId, stopVoicePlayback, voiceState]
+    [activeSpeechMsgId, isListening, stopVoice, stopVoicePlayback, voiceState]
   );
 
   const commitFinalStreamMessage = useCallback(
@@ -651,27 +1047,49 @@ export const AIScreen: React.FC<AIScreenProps> = ({
     []
   );
 
+  const armLiveVoiceTurn = useCallback(() => {
+    if (
+      !voiceChatActiveRef.current ||
+      isStreamingRef.current ||
+      voicePausedRef.current ||
+      voiceDraftRef.current !== null ||
+      activeFieldRef.current !== null
+    ) {
+      return;
+    }
+    liveVoiceBufferRef.current = '';
+    setLiveCapturedText('');
+    pauseToEditRequestedRef.current = false;
+    void toggleField('ai-live-voice', { autoFinalize: true });
+  }, [toggleField]);
+  armLiveVoiceTurnRef.current = armLiveVoiceTurn;
+
   const runStreamForHistory = useCallback(
     async (
       convId: string,
       historyForRequest: AIChatMessage[],
       assistantMsgId: string,
-      autoSpeak = false
+      speakResponse: boolean
     ) => {
+      // Guarantee mic is never active while AI generates & speaks its reply
+      stopVoice(true);
+      setBargeInMonitoring(false);
+      bargeInTriggeredRef.current = false;
       setIsStreaming(true);
-      setStreamStatus('Connecting to stream…');
+      setStreamStatus(speakResponse ? 'Syncing voice & reply…' : 'Thinking…');
       streamTextRef.current = '';
+      syncDisplayTextRef.current = '';
+      bypassSyncRevealRef.current = !speakResponse;
       streamActionsRef.current = [];
       setLiveStream({ convId, msgId: assistantMsgId, text: '', actions: [] });
 
       const controller = new AbortController();
       abortRef.current = controller;
 
-      // Start speech session immediately so first generated clause begins speaking in ~400ms
+      // Single unified UK English AI voice session locked to AudioContext clock when speakSync is active
       let speechSession = 0;
-      let speechClauseBuffer = '';
-      let isFirstSpeechClause = true;
-      if (autoSpeak && aiVoiceEnabledRef.current && voiceEngineRef.current) {
+      let sawSyncMeta = false;
+      if (speakResponse && voiceEngineRef.current) {
         speechSession = voiceEngineRef.current.beginSession();
         setActiveSpeechMsgId(assistantMsgId);
       }
@@ -680,10 +1098,16 @@ export const AIScreen: React.FC<AIScreenProps> = ({
         if (rafIdRef.current !== null) return;
         rafIdRef.current = window.requestAnimationFrame(() => {
           rafIdRef.current = null;
+          const visibleText =
+            speakResponse && sawSyncMeta && !bypassSyncRevealRef.current
+              ? syncDisplayTextRef.current
+              : speakResponse && !bypassSyncRevealRef.current
+              ? ''
+              : streamTextRef.current;
           setLiveStream({
             convId,
             msgId: assistantMsgId,
-            text: streamTextRef.current,
+            text: visibleText,
             actions: [...streamActionsRef.current],
           });
         });
@@ -696,11 +1120,22 @@ export const AIScreen: React.FC<AIScreenProps> = ({
         }
       };
 
+      if (speakResponse && speechSession > 0 && voiceEngineRef.current) {
+        voiceEngineRef.current.beginSyncTurn(speechSession, (revealedText) => {
+          syncDisplayTextRef.current = revealedText;
+          if (!bypassSyncRevealRef.current) {
+            scheduleRafFlush();
+          }
+        });
+      }
+
       try {
         const finalText = await streamAIChat({
           messages: historyForRequest,
           journalContext: journalSnapshot,
           mode: aiMode,
+          voiceTurn: speakResponse,
+          speakSync: speakResponse,
           signal: controller.signal,
           onStatus: (status) => {
             setStreamStatus(status);
@@ -713,56 +1148,58 @@ export const AIScreen: React.FC<AIScreenProps> = ({
               scheduleRafFlush();
             }
           },
+          onSyncClauseMeta: (meta) => {
+            if (!speakResponse || speechSession <= 0 || !voiceEngineRef.current) return;
+            sawSyncMeta = true;
+            voiceEngineRef.current.registerSyncClauseMeta(meta, speechSession);
+          },
+          onSyncAudioPcm: ({ clauseId, base64Pcm }) => {
+            if (!speakResponse || speechSession <= 0 || !voiceEngineRef.current) return;
+            setStreamStatus(null);
+            voiceEngineRef.current.pushSyncAudioPcm(clauseId, base64Pcm, speechSession);
+          },
+          onSyncClauseEnd: ({ clauseId, textOnly }) => {
+            if (!speakResponse || speechSession <= 0 || !voiceEngineRef.current) return;
+            voiceEngineRef.current.finishSyncClause(clauseId, Boolean(textOnly), speechSession);
+          },
           onDelta: (delta) => {
             streamTextRef.current += delta;
-            setStreamStatus(null);
-            scheduleRafFlush();
-
-            if (
-              autoSpeak &&
-              speechSession > 0 &&
-              aiVoiceEnabledRef.current &&
-              voiceEngineRef.current
-            ) {
-              speechClauseBuffer += delta;
-              const { clauses, remainder } = extractSpeakableClauses(
-                speechClauseBuffer,
-                isFirstSpeechClause,
-                false
-              );
-              speechClauseBuffer = remainder;
-              for (const clause of clauses) {
-                voiceEngineRef.current.enqueueClause(clause, speechSession);
-                isFirstSpeechClause = false;
-              }
+            if (!speakResponse || bypassSyncRevealRef.current) {
+              setStreamStatus(null);
+              scheduleRafFlush();
             }
           },
         });
 
-        cancelRaf();
         const committedText = finalText || streamTextRef.current;
 
-        // Flush any remaining trailing clause to the UK voice queue immediately
-        if (
-          autoSpeak &&
-          speechSession > 0 &&
-          aiVoiceEnabledRef.current &&
-          voiceEngineRef.current &&
-          speechClauseBuffer.trim()
-        ) {
-          const { clauses } = extractSpeakableClauses(
-            speechClauseBuffer,
-            isFirstSpeechClause,
-            true
-          );
-          for (const clause of clauses) {
-            voiceEngineRef.current.enqueueClause(clause, speechSession);
-            isFirstSpeechClause = false;
+        if (speakResponse && speechSession > 0 && voiceEngineRef.current) {
+          voiceEngineRef.current.completeSyncTurnStream(speechSession);
+          // Fallback if server yielded deltas without sync_clause_meta
+          if (!sawSyncMeta) {
+            bypassSyncRevealRef.current = true;
+            scheduleRafFlush();
           }
-          speechClauseBuffer = '';
+          await voiceEngineRef.current.waitUntilIdle(speechSession);
         }
 
+        cancelRaf();
         commitFinalStreamMessage(convId, assistantMsgId, committedText, streamActionsRef.current);
+
+        // Cleanly re-arm live voice mic once synced voice playback completes (unless barged in)
+        if (
+          voiceChatActiveRef.current &&
+          speakResponse &&
+          !bypassSyncRevealRef.current &&
+          !bargeInTriggeredRef.current &&
+          !controller.signal.aborted &&
+          !voicePausedRef.current &&
+          voiceDraftRef.current === null
+        ) {
+          window.setTimeout(() => {
+            armLiveVoiceTurnRef.current();
+          }, 55);
+        }
       } catch (err) {
         cancelRaf();
         const isAborted = (err as Error)?.name === 'AbortError' || controller.signal.aborted;
@@ -800,89 +1237,208 @@ export const AIScreen: React.FC<AIScreenProps> = ({
         setLiveStream(null);
         setIsStreaming(false);
         setStreamStatus(null);
+        if (
+          voiceChatActiveRef.current &&
+          !bargeInTriggeredRef.current &&
+          !voicePausedRef.current &&
+          voiceDraftRef.current === null &&
+          activeFieldRef.current === null
+        ) {
+          window.setTimeout(() => {
+            armLiveVoiceTurnRef.current();
+          }, 90);
+        }
       }
     },
-    [aiMode, commitFinalStreamMessage, journalSnapshot]
+    [aiMode, commitFinalStreamMessage, journalSnapshot, setBargeInMonitoring, stopVoice]
   );
 
-  const handleSend = async (overrideText?: string) => {
-    if (isListening) {
-      stopVoice(false);
-    }
+  const handleSend = useCallback(
+    async (overrideText?: string, meta?: { viaVoice?: boolean }) => {
+      if (isListening && !meta?.viaVoice) {
+        stopVoice(false);
+      }
 
-    const textToSend = (overrideText ?? input).trim();
-    if ((!textToSend && attachments.length === 0) || isStreaming || !activeConversation) {
+      const conv = activeConversationRef.current;
+      const textToSend = (overrideText ?? input).trim();
+      if ((!textToSend && attachments.length === 0) || isStreamingRef.current || !conv) {
+        return;
+      }
+
+      if (!isOnline) {
+        setAttachError('MSL AI requires an internet connection. Your local journal works offline.');
+        return;
+      }
+
+      const sentViaVoice = Boolean(meta?.viaVoice || (!overrideText && usedVoiceNoteRef.current));
+      usedVoiceNoteRef.current = false;
+
+      // Single UK English voice speaks replies automatically during Voice Chat or Voice Note turns
+      const shouldAutoSpeak = voiceChatActiveRef.current || sentViaVoice;
+      if (shouldAutoSpeak) {
+        voiceEngineRef.current?.unlock();
+      } else {
+        stopVoicePlayback();
+      }
+
+      setAttachError(null);
+      setEditingMsgId(null);
+      const convId = conv.id;
+
+      const userMsg: AIChatMessage = {
+        id: generateId(),
+        role: 'user',
+        text: textToSend || 'Analyze the attached chart screenshot.',
+        attachments: attachments.length > 0 ? [...attachments] : undefined,
+        createdAt: new Date().toISOString(),
+        viaVoice: sentViaVoice || undefined,
+      };
+
+      const assistantMsgId = generateId();
+      const assistantPlaceholder: AIChatMessage = {
+        id: assistantMsgId,
+        role: 'model',
+        text: '',
+        createdAt: new Date().toISOString(),
+      };
+
+      const updatedHistory = [...conv.messages, userMsg];
+      const nextTitle =
+        conv.messages.length === 0
+          ? userMsg.text.slice(0, 44) + (userMsg.text.length > 44 ? '…' : '')
+          : conv.title;
+
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === convId
+            ? {
+                ...c,
+                title: nextTitle,
+                messages: [...updatedHistory, assistantPlaceholder],
+                updatedAt: new Date().toISOString(),
+              }
+            : c
+        )
+      );
+
+      if (!overrideText) setInput('');
+      setAttachments([]);
+
+      await runStreamForHistory(convId, updatedHistory, assistantMsgId, shouldAutoSpeak);
+    },
+    [attachments, input, isListening, isOnline, runStreamForHistory, stopVoice, stopVoicePlayback]
+  );
+
+  handleSendRef.current = handleSend;
+
+  const toggleVoiceChat = useCallback(() => {
+    if (voiceChatActiveRef.current) {
+      setVoiceChatActive(false);
+      voiceChatActiveRef.current = false;
+      setVoicePaused(false);
+      voicePausedRef.current = false;
+      setVoiceDraft(null);
+      setLiveCapturedText('');
+      pauseToEditRequestedRef.current = false;
+      bargeInTriggeredRef.current = false;
+      liveVoiceBufferRef.current = '';
+      setBargeInMonitoring(false);
+      stopVoice(true);
+      stopVoicePlayback();
       return;
     }
 
     if (!isOnline) {
-      setAttachError('MSL AI requires an internet connection. Your local journal works offline.');
+      setAttachError('Live Voice Chat requires an internet connection.');
       return;
     }
 
-    const sentViaVoice = !overrideText && usedVoiceNoteRef.current;
-    usedVoiceNoteRef.current = false;
-
-    if (sentViaVoice && aiVoiceEnabledRef.current) {
-      voiceEngineRef.current?.unlock();
-    } else {
-      stopVoicePlayback();
-    }
-
+    voiceEngineRef.current?.unlock();
     setAttachError(null);
-    const convId = activeConversation.id;
+    setVoicePaused(false);
+    voicePausedRef.current = false;
+    setVoiceDraft(null);
+    setLiveCapturedText('');
+    bargeInTriggeredRef.current = false;
+    setVoiceChatActive(true);
+    voiceChatActiveRef.current = true;
 
-    const userMsg: AIChatMessage = {
-      id: generateId(),
-      role: 'user',
-      text: textToSend || 'Analyze the attached chart screenshot.',
-      attachments: attachments.length > 0 ? [...attachments] : undefined,
-      createdAt: new Date().toISOString(),
-      viaVoice: sentViaVoice || undefined,
-    };
+    if (!isStreamingRef.current) {
+      liveVoiceBufferRef.current = '';
+      pauseToEditRequestedRef.current = false;
+      void toggleField('ai-live-voice', { autoFinalize: true });
+    }
+  }, [isOnline, setBargeInMonitoring, stopVoice, stopVoicePlayback, toggleField]);
 
-    const assistantMsgId = generateId();
-    const assistantPlaceholder: AIChatMessage = {
-      id: assistantMsgId,
-      role: 'model',
-      text: '',
-      createdAt: new Date().toISOString(),
-    };
+  const handlePauseAndEditVoice = useCallback(() => {
+    if (!voiceChatActiveRef.current) return;
+    pauseToEditRequestedRef.current = true;
+    const partial = [liveVoiceBufferRef.current.trim(), interimText.trim()]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    if (isListening && activeField === 'ai-live-voice') {
+      stopVoice(false);
+    } else {
+      setVoicePaused(true);
+      voicePausedRef.current = true;
+      setVoiceDraft((prev) => (prev !== null ? prev : partial));
+    }
+  }, [activeField, interimText, isListening, stopVoice]);
 
-    const updatedHistory = [...activeConversation.messages, userMsg];
-    const nextTitle =
-      activeConversation.messages.length === 0
-        ? userMsg.text.slice(0, 44) + (userMsg.text.length > 44 ? '…' : '')
-        : activeConversation.title;
+  const handleTogglePauseVoice = useCallback(() => {
+    if (!voiceChatActiveRef.current) return;
+    setVoicePaused((prev) => {
+      const next = !prev;
+      voicePausedRef.current = next;
+      if (next) {
+        if (isListening && activeField === 'ai-live-voice') {
+          pauseToEditRequestedRef.current = true;
+          stopVoice(false);
+        }
+      } else if (!isStreamingRef.current && voiceState === 'idle' && voiceDraftRef.current === null) {
+        armLiveVoiceTurn();
+      }
+      return next;
+    });
+  }, [activeField, armLiveVoiceTurn, isListening, stopVoice, voiceState]);
 
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id === convId
-          ? {
-              ...c,
-              title: nextTitle,
-              messages: [...updatedHistory, assistantPlaceholder],
-              updatedAt: new Date().toISOString(),
-            }
-          : c
-      )
-    );
+  const handleSendVoiceDraft = useCallback(() => {
+    const clean = (voiceDraft ?? '').trim();
+    if (!clean || isStreamingRef.current) return;
+    setVoiceDraft(null);
+    setVoicePaused(false);
+    voicePausedRef.current = false;
+    void handleSend(clean, { viaVoice: true });
+  }, [handleSend, voiceDraft]);
 
-    if (!overrideText) setInput('');
-    setAttachments([]);
-
-    await runStreamForHistory(
-      convId,
-      updatedHistory,
-      assistantMsgId,
-      sentViaVoice && aiVoiceEnabledRef.current
-    );
-  };
+  const handleInterruptAndSpeak = useCallback(() => {
+    if (!voiceChatActiveRef.current) return;
+    setBargeInMonitoring(false);
+    bargeInTriggeredRef.current = true;
+    stopVoicePlayback();
+    setVoicePaused(false);
+    voicePausedRef.current = false;
+    setVoiceDraft(null);
+    if (isStreamingRef.current) {
+      abortRef.current?.abort();
+    }
+    window.setTimeout(() => {
+      if (voiceChatActiveRef.current) {
+        bargeInTriggeredRef.current = false;
+        liveVoiceBufferRef.current = '';
+        setLiveCapturedText('');
+        pauseToEditRequestedRef.current = false;
+        void toggleField('ai-live-voice', { autoFinalize: true });
+      }
+    }, 45);
+  }, [setBargeInMonitoring, stopVoicePlayback, toggleField]);
 
   const handleRetryMessage = useCallback(
     async (targetMsgId: string) => {
       if (isStreaming) return;
-      const conv = conversationsRef.current.find((c) => c.id === activeId) || conversationsRef.current[0];
+      const conv =
+        conversationsRef.current.find((c) => c.id === activeId) || conversationsRef.current[0];
       if (!conv) return;
 
       if (!isOnline) {
@@ -890,13 +1446,12 @@ export const AIScreen: React.FC<AIScreenProps> = ({
         return;
       }
 
+      setAttachError(null);
       const idx = conv.messages.findIndex((m) => m.id === targetMsgId);
       if (idx <= 0) return;
 
-      setAttachError(null);
       const historyBeforeTarget = conv.messages.slice(0, idx);
-      const precedingUser = [...historyBeforeTarget].reverse().find((m) => m.role === 'user');
-      const shouldAutoSpeak = Boolean(precedingUser?.viaVoice) && aiVoiceEnabledRef.current;
+      const shouldAutoSpeak = voiceChatActiveRef.current;
       if (shouldAutoSpeak) {
         voiceEngineRef.current?.unlock();
       } else {
@@ -928,6 +1483,74 @@ export const AIScreen: React.FC<AIScreenProps> = ({
     [activeId, isOnline, isStreaming, runStreamForHistory, stopVoicePlayback]
   );
 
+  const handleStartEdit = useCallback((msgId: string, currentText: string) => {
+    if (isStreamingRef.current) return;
+    setEditingMsgId(msgId);
+    setEditDraft(currentText);
+  }, []);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditingMsgId(null);
+    setEditDraft('');
+  }, []);
+
+  const handleSaveEdit = useCallback(
+    async (targetUserMsgId: string) => {
+      const trimmed = editDraft.trim();
+      if (!trimmed || isStreamingRef.current) return;
+      if (!isOnline) {
+        setAttachError('MSL AI requires an internet connection. Reconnect and try again.');
+        return;
+      }
+
+      const conv =
+        conversationsRef.current.find((c) => c.id === activeId) || conversationsRef.current[0];
+      if (!conv) return;
+
+      const idx = conv.messages.findIndex((m) => m.id === targetUserMsgId);
+      if (idx < 0) return;
+
+      const shouldAutoSpeak = voiceChatActiveRef.current;
+      if (shouldAutoSpeak) {
+        voiceEngineRef.current?.unlock();
+      } else {
+        stopVoicePlayback();
+      }
+
+      setAttachError(null);
+      setEditingMsgId(null);
+      setEditDraft('');
+
+      const editedUserMsg: AIChatMessage = {
+        ...conv.messages[idx],
+        text: trimmed,
+      };
+      const updatedHistory = [...conv.messages.slice(0, idx), editedUserMsg];
+      const freshAssistantId = generateId();
+      const freshPlaceholder: AIChatMessage = {
+        id: freshAssistantId,
+        role: 'model',
+        text: '',
+        createdAt: new Date().toISOString(),
+      };
+
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === conv.id
+            ? {
+                ...c,
+                messages: [...updatedHistory, freshPlaceholder],
+                updatedAt: new Date().toISOString(),
+              }
+            : c
+        )
+      );
+
+      await runStreamForHistory(conv.id, updatedHistory, freshAssistantId, shouldAutoSpeak);
+    },
+    [activeId, editDraft, isOnline, runStreamForHistory, stopVoicePlayback]
+  );
+
   const handleCopy = useCallback(async (msgId: string, text: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -946,6 +1569,17 @@ export const AIScreen: React.FC<AIScreenProps> = ({
   const canQuickRetryLast =
     !isStreaming && Boolean(lastMessage && lastMessage.role === 'model');
 
+  const isLiveVoiceTurn = activeField === 'ai-live-voice';
+  const liveVoiceStatusText = isStreaming
+    ? 'Thinking…'
+    : voiceState === 'speaking' || voiceState === 'loading'
+    ? 'Speaking (UK English AI)…'
+    : isTranscribing
+    ? 'Transcribing voice turn…'
+    : isListening && isLiveVoiceTurn
+    ? interimText || 'Listening… speak naturally (auto-sends on pause)'
+    : 'Voice chat ready';
+
   return (
     <div
       className={
@@ -954,17 +1588,15 @@ export const AIScreen: React.FC<AIScreenProps> = ({
           : 'flex flex-col min-h-[480px] h-[calc(100dvh-10rem-env(safe-area-inset-bottom,0px))] lg:h-[calc(100dvh-8.25rem)] gap-3.5'
       }
     >
-      {/* Clean Single-Row Workspace Header */}
+      {/* Grok-Style Clean Header */}
       <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-3 shrink-0">
         <div className="min-w-0">
           <h2 className="font-display text-xl sm:text-2xl font-extrabold tracking-tight text-[#eef3fb]">
             MSL AI
           </h2>
           <p className="text-xs text-[#8b9ab0] tabular-nums truncate">
-            {aiMode === 'fast' ? 'Fast response' : 'Deep audit'} ·{' '}
-            {syncContext
-              ? `${journalState.trades.length} trades synced`
-              : 'Journal context off'}
+            {aiMode === 'fast' ? 'Fast stream' : 'Deep reasoning'} ·{' '}
+            {syncContext ? `${journalState.trades.length} trades synced` : 'Context off'}
           </p>
         </div>
 
@@ -983,7 +1615,7 @@ export const AIScreen: React.FC<AIScreenProps> = ({
                   ? 'bg-[#47dca0] text-[#051612]'
                   : 'text-[#9aa8be] hover:text-[#eef3fb]'
               }`}
-              title="Instant low-latency replies & app control"
+              title="Instant low-latency cross-domain replies & app control"
             >
               <Zap className="w-3.5 h-3.5" />
               <span>Fast</span>
@@ -996,7 +1628,7 @@ export const AIScreen: React.FC<AIScreenProps> = ({
                   ? 'bg-[#8ebeff] text-[#051612]'
                   : 'text-[#9aa8be] hover:text-[#eef3fb]'
               }`}
-              title="Deep multi-step quantitative audit & edge reasoning"
+              title="Deep first-principles & quantitative audit"
             >
               <Sparkles className="w-3.5 h-3.5" />
               <span>Deep</span>
@@ -1005,36 +1637,51 @@ export const AIScreen: React.FC<AIScreenProps> = ({
 
           <button
             type="button"
-            onClick={toggleAiVoice}
-            aria-pressed={aiVoiceEnabled}
+            onClick={toggleVoiceChat}
+            aria-pressed={voiceChatActive}
             className={`min-h-[40px] inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold border transition whitespace-nowrap shrink-0 ${
-              aiVoiceEnabled
-                ? 'bg-[#47dca0]/14 border-[#47dca0]/40 text-[#8df0c0]'
+              voiceChatActive
+                ? 'bg-[#47dca0] border-[#47dca0] text-[#051612]'
+                : 'glass-subcard text-[#c9d4e7] hover:text-[#8df0c0] hover:border-[#47dca0]/45'
+            }`}
+            title="Hands-free UK English voice conversation"
+          >
+            {voiceChatActive ? (
+              <PhoneOff className="w-3.5 h-3.5" />
+            ) : (
+              <AudioWaveform className="w-3.5 h-3.5 text-[#8df0c0]" />
+            )}
+            <span>{voiceChatActive ? 'End voice' : 'Voice chat'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMemoryOpen(true)}
+            className={`min-h-[40px] inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold border transition whitespace-nowrap shrink-0 ${
+              memories.length > 0
+                ? 'glass-subcard text-[#eef3fb] border-[#47dca0]/35 hover:border-[#47dca0]/60'
                 : 'glass-subcard text-[#9aa8be] hover:text-[#eef3fb]'
             }`}
-            title={
-              aiVoiceEnabled
-                ? 'UK English AI voice active for voice notes (tap to turn off)'
-                : 'AI voice replies muted (tap to turn on)'
-            }
+            title="Manage persistent cross-conversation AI memory"
           >
-            {aiVoiceEnabled ? (
-              <Volume2 className="w-3.5 h-3.5" />
-            ) : (
-              <VolumeX className="w-3.5 h-3.5" />
+            <Brain className="w-3.5 h-3.5 text-[#8df0c0]" />
+            <span className="hidden sm:inline">Memory</span>
+            {memories.length > 0 && (
+              <span className="tabular-nums text-[11px] font-bold text-[#8df0c0]">
+                {memories.length}
+              </span>
             )}
-            <span>{aiVoiceEnabled ? 'Voice on' : 'Voice off'}</span>
           </button>
 
           <button
             type="button"
             onClick={() => setSyncContext((v) => !v)}
-            className={`min-h-[40px] inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold border transition whitespace-nowrap shrink-0 ${
+            className={`hidden sm:inline-flex min-h-[40px] items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold border transition whitespace-nowrap shrink-0 ${
               syncContext
                 ? 'bg-[#47dca0]/14 border-[#47dca0]/40 text-[#8df0c0]'
                 : 'glass-subcard text-[#9aa8be] hover:text-[#eef3fb]'
             }`}
-            title="Include your live trades, models, alarms, and playbook in AI context"
+            title="Include your live trades, Total PnL, models, alarms, and playbook"
           >
             <span>{syncContext ? 'Context on' : 'Context off'}</span>
           </button>
@@ -1084,7 +1731,7 @@ export const AIScreen: React.FC<AIScreenProps> = ({
         </div>
       </div>
 
-      {/* Unified Single-Elevation Split-Pane Glass Workspace */}
+      {/* Grok-Inspired Split-Pane Liquid-Glass Workspace */}
       <div className="flex-1 min-h-0 rounded-2xl glass-card overflow-hidden grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-white/[0.08]">
         {/* Desktop Thread Sidebar */}
         <aside className="hidden lg:flex lg:col-span-3 flex-col p-3 overflow-hidden bg-white/[0.015]">
@@ -1092,7 +1739,7 @@ export const AIScreen: React.FC<AIScreenProps> = ({
             <span>Threads</span>
             <span className="tabular-nums text-[11px] text-[#6d7d96]">{conversations.length}</span>
           </div>
-          <div className="mt-2 flex-1 overflow-y-auto space-y-1">
+          <div className="mt-2 flex-1 overflow-y-auto overscroll-contain space-y-1">
             {conversations.map((conv) => {
               const active = conv.id === activeConversation?.id;
               return (
@@ -1125,7 +1772,7 @@ export const AIScreen: React.FC<AIScreenProps> = ({
           </div>
         </aside>
 
-        {/* Chat Stream & Composer */}
+        {/* Centered Grok-Style Editorial Chat Stream & Composer */}
         <section
           onDragOver={(e) => {
             e.preventDefault();
@@ -1137,7 +1784,6 @@ export const AIScreen: React.FC<AIScreenProps> = ({
             isDraggingImage ? 'ring-2 ring-inset ring-[#47dca0]/70 bg-[#47dca0]/[0.03]' : ''
           }`}
         >
-          {/* Offline Notice inside AI panel */}
           {!isOnline && (
             <div className="px-4 py-2.5 bg-[#f5cc79]/10 border-b border-[#f5cc79]/25 flex items-center justify-between gap-2 text-xs text-[#f5cc79]">
               <span className="inline-flex items-center gap-2">
@@ -1157,271 +1803,436 @@ export const AIScreen: React.FC<AIScreenProps> = ({
             </div>
           )}
 
-          {/* Messages Viewport */}
-          <div
-            ref={messagesViewportRef}
-            className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 space-y-5"
-          >
-            {messages.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center max-w-xl mx-auto py-4 space-y-6">
-                <div className="space-y-2.5">
-                  <div className="mx-auto h-12 w-12 rounded-2xl border border-white/15 bg-gradient-to-br from-[#1d3e42]/80 to-[#0d1d2d]/80 flex items-center justify-center text-[#8df0c0] shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]">
-                    <Bot className="w-6 h-6" />
-                  </div>
-                  <h3 className="font-display text-lg sm:text-xl font-bold text-[#eef3fb] [text-wrap:balance]">
-                    Trading intelligence & live app control
-                  </h3>
-                  <p className="text-xs sm:text-sm text-[#8b9ab0] leading-relaxed">
-                    Attach chart screenshots, record a voice note for real-time UK voice replies, audit your expectancy, or command the app.
-                  </p>
+          {/* Minimal, Simple Inline Voice Strip (Zero Noisy Bubble Card) */}
+          {voiceChatActive && (
+            <div className="border-b border-white/[0.07] bg-white/[0.015] px-4 sm:px-6 py-2.5 shrink-0 space-y-2">
+              <div className="max-w-3xl mx-auto w-full flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  {isStreaming || isTranscribing || voiceState === 'loading' ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-[#47dca0] shrink-0" />
+                  ) : (
+                    <span
+                      className={`h-2 w-2 rounded-full shrink-0 ${
+                        voiceState === 'speaking'
+                          ? 'bg-[#8ebeff]'
+                          : isListening && isLiveVoiceTurn
+                          ? 'bg-[#47dca0]'
+                          : 'bg-[#6d7d96]'
+                      }`}
+                    />
+                  )}
+                  <span className="text-xs font-medium text-[#eef3fb] truncate">
+                    {voiceDraft !== null
+                      ? 'Edit spoken message'
+                      : liveCapturedText || interimText
+                      ? [liveCapturedText, interimText].filter(Boolean).join(' ')
+                      : voicePaused
+                      ? 'Paused'
+                      : isStreaming
+                      ? 'Thinking…'
+                      : voiceState === 'speaking' || voiceState === 'loading'
+                      ? 'Speaking… (speak anytime to interrupt)'
+                      : isTranscribing
+                      ? 'Transcribing…'
+                      : isListening && isLiveVoiceTurn
+                      ? 'Listening…'
+                      : 'Voice ready'}
+                  </span>
                 </div>
 
-                <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-left">
-                  {STARTER_PROMPTS.map((item) => (
-                    <button
-                      key={item.title}
-                      type="button"
-                      onClick={() => void handleSend(item.prompt)}
-                      className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3.5 hover:border-[#47dca0]/45 hover:bg-white/[0.06] transition"
-                    >
-                      <p className="text-xs font-bold text-[#8df0c0]">{item.title}</p>
-                      <p className="mt-1 text-xs text-[#a9b7cc] line-clamp-2 leading-relaxed">
-                        {item.prompt}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              messages.map((msg) => {
-                const isStreamingThis = Boolean(
-                  isStreaming &&
-                    liveStream &&
-                    liveStream.convId === activeConversation?.id &&
-                    liveStream.msgId === msg.id
-                );
-                const displayText = isStreamingThis ? liveStream!.text : msg.text;
-                const displayActions = isStreamingThis
-                  ? liveStream!.actions
-                  : msg.actions;
-
-                return (
-                  <MessageBubble
-                    key={msg.id}
-                    msg={msg}
-                    displayText={displayText}
-                    displayActions={displayActions}
-                    isStreamingThis={isStreamingThis}
-                    streamStatus={isStreamingThis ? streamStatus : null}
-                    aiMode={aiMode}
-                    copiedId={copiedId}
-                    voiceState={voiceState}
-                    activeSpeechMsgId={activeSpeechMsgId}
-                    onCopy={handleCopy}
-                    onRetry={(id) => void handleRetryMessage(id)}
-                    onSpeakToggle={handleSpeakToggle}
-                    onOpenImage={handleOpenLightbox}
-                  />
-                );
-              })
-            )}
-            <div ref={scrollEndRef} />
-          </div>
-
-          {/* Composer Area */}
-          <div className="border-t border-white/[0.08] p-3 sm:p-4 space-y-2.5 bg-[#080e1b]/65">
-            {attachError && (
-              <div className="flex items-center justify-between gap-2 text-xs text-[#ff7d91] px-1">
-                <span className="truncate">{attachError}</span>
-                <div className="flex items-center gap-2 shrink-0">
-                  {canQuickRetryLast && lastMessage && (
+                <div className="flex items-center gap-3 shrink-0">
+                  {isListening && isLiveVoiceTurn && (
                     <button
                       type="button"
-                      onClick={() => void handleRetryMessage(lastMessage.id)}
-                      className="inline-flex items-center gap-1 rounded-lg bg-[#ff7d91]/15 border border-[#ff7d91]/35 px-2 py-1 text-xs font-semibold text-[#eef3fb] hover:bg-[#ff7d91]/25 transition"
+                      onClick={handlePauseAndEditVoice}
+                      className="text-xs font-medium text-[#9aa8be] hover:text-[#eef3fb] transition"
                     >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>Retry</span>
+                      Edit
                     </button>
                   )}
+
+                  {(voiceState === 'speaking' || voiceState === 'loading' || isStreaming) && (
+                    <button
+                      type="button"
+                      onClick={handleInterruptAndSpeak}
+                      className="text-xs font-medium text-[#8df0c0] hover:text-[#eef3fb] transition"
+                    >
+                      Interrupt
+                    </button>
+                  )}
+
+                  {voiceDraft === null && !isStreaming && voiceState === 'idle' && (
+                    <button
+                      type="button"
+                      onClick={isListening || voicePaused ? handleTogglePauseVoice : armLiveVoiceTurn}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-[#9aa8be] hover:text-[#eef3fb] transition"
+                    >
+                      {voicePaused ? (
+                        <>
+                          <Play className="w-3 h-3 text-[#47dca0]" />
+                          <span>Resume</span>
+                        </>
+                      ) : isListening ? (
+                        <>
+                          <Pause className="w-3 h-3" />
+                          <span>Pause</span>
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="w-3 h-3 text-[#47dca0]" />
+                          <span>Speak</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+
                   <button
                     type="button"
-                    onClick={() => setAttachError(null)}
-                    aria-label="Dismiss error"
-                    className="text-[#8b9ab0] hover:text-[#eef3fb]"
+                    onClick={toggleVoiceChat}
+                    className="text-xs font-semibold text-[#ff7d91] hover:text-[#ffb4bf] transition"
                   >
-                    <X className="w-3.5 h-3.5" />
+                    End
                   </button>
                 </div>
               </div>
-            )}
 
-            {voiceState !== 'idle' && (
-              <div className="flex items-center justify-between gap-2 rounded-xl bg-[#47dca0]/10 border border-[#47dca0]/30 px-3 py-2 text-xs text-[#8df0c0]">
-                <span className="inline-flex items-center gap-2 truncate">
-                  {voiceState === 'loading' ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                  ) : (
-                    <Volume2 className="w-3.5 h-3.5 shrink-0" />
-                  )}
-                  <span className="truncate">
-                    {voiceState === 'loading'
-                      ? 'Preparing UK AI voice…'
-                      : 'Speaking UK AI voice…'}
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  onClick={stopVoicePlayback}
-                  className="text-xs font-semibold text-[#eef3fb] hover:text-[#ff7d91] transition shrink-0"
-                >
-                  Stop voice
-                </button>
-              </div>
-            )}
-
-            {(isListening || isTranscribing || interimText) && (
-              <div className="flex items-center justify-between gap-2 rounded-xl bg-[#47dca0]/10 border border-[#47dca0]/30 px-3 py-2 text-xs text-[#8df0c0]">
-                <span className="truncate">
-                  {isTranscribing
-                    ? 'Transcribing voice note…'
-                    : interimText ||
-                      'Recording voice note — tap Done or the stop icon when finished'}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => stopVoice(false)}
-                  className="text-xs font-semibold underline shrink-0"
-                >
-                  Done
-                </button>
-              </div>
-            )}
-
-            {attachments.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {attachments.map((att) => (
-                  <div
-                    key={att.id}
-                    className="relative h-14 w-20 rounded-xl overflow-hidden border border-white/[0.15]"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setLightboxImage({ src: att.dataUrl, name: att.name })}
-                      className="h-full w-full block"
-                      aria-label={`Preview ${att.name}`}
-                    >
-                      <img
-                        src={att.dataUrl}
-                        alt={att.name}
-                        referrerPolicy="no-referrer"
-                        className="h-full w-full object-cover"
-                      />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setAttachments((prev) => prev.filter((x) => x.id !== att.id))
+              {voiceDraft !== null && (
+                <div className="max-w-3xl mx-auto w-full flex items-center gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={voiceDraft}
+                    onChange={(e) => setVoiceDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && voiceDraft.trim() && !isStreaming) {
+                        e.preventDefault();
+                        handleSendVoiceDraft();
                       }
-                      aria-label={`Remove ${att.name}`}
-                      className="absolute top-1 right-1 h-5 w-5 flex items-center justify-center rounded-md bg-black/80 text-white"
+                    }}
+                    autoFocus
+                    placeholder="Edit spoken message…"
+                    className="flex-1 rounded-xl glass-input px-3 py-1.5 text-sm text-[#eef3fb] focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setVoiceDraft(null)}
+                    className="min-h-[34px] rounded-xl px-2.5 text-xs text-[#8b9ab0] hover:text-[#eef3fb]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSendVoiceDraft}
+                    disabled={!voiceDraft.trim() || isStreaming}
+                    className="min-h-[34px] rounded-xl bg-[#47dca0] px-3 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] disabled:opacity-45 transition"
+                  >
+                    Send
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Centered Editorial Messages Viewport */}
+          <div ref={messagesViewportRef} className="flex-1 overflow-y-auto overscroll-contain px-3 sm:px-6 py-5">
+            <div className="max-w-3xl mx-auto w-full space-y-5">
+              {messages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center text-center max-w-xl mx-auto py-8 space-y-6">
+                  <div className="space-y-3">
+                    <div className="mx-auto h-14 w-14 rounded-2xl liquid-glass flex items-center justify-center text-[#8df0c0]">
+                      <Bot className="w-7 h-7" />
+                    </div>
+                    <h3 className="font-display text-xl sm:text-2xl font-extrabold tracking-tight text-[#eef3fb] [text-wrap:balance]">
+                      Ask anything. Trade with precision.
+                    </h3>
+                    <p className="text-xs sm:text-sm text-[#8b9ab0] leading-relaxed">
+                      First-principles market &amp; cross-domain intelligence, chart vision, Total PnL audits, live UK English voice conversation, and direct journal control.
+                    </p>
+                  </div>
+
+                  <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-left">
+                    {STARTER_PROMPTS.map((item) => (
+                      <button
+                        key={item.title}
+                        type="button"
+                        onClick={() => void handleSend(item.prompt)}
+                        className="rounded-xl glass-subcard p-3.5 hover:border-[#47dca0]/45 transition text-left"
+                      >
+                        <p className="text-xs font-bold text-[#8df0c0]">{item.title}</p>
+                        <p className="mt-1 text-xs text-[#a9b7cc] line-clamp-2 leading-relaxed">
+                          {item.prompt}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <ChatMessageList
+                  messages={messages}
+                  activeConvId={activeConversation?.id}
+                  liveStream={liveStream}
+                  isStreaming={isStreaming}
+                  streamStatus={streamStatus}
+                  aiMode={aiMode}
+                  copiedId={copiedId}
+                  voiceState={voiceState}
+                  activeSpeechMsgId={activeSpeechMsgId}
+                  editingMsgId={editingMsgId}
+                  editDraft={editDraft}
+                  onEditDraftChange={setEditDraft}
+                  onStartEdit={handleStartEdit}
+                  onCancelEdit={handleCancelEdit}
+                  onSaveEdit={handleSaveEdit}
+                  onCopy={handleCopy}
+                  onRetry={handleRetryMessage}
+                  onSpeakToggle={handleSpeakToggle}
+                  onOpenImage={handleOpenLightbox}
+                />
+              )}
+              <div ref={scrollEndRef} />
+            </div>
+          </div>
+
+          {/* Grok-Style Floating Liquid Glass Composer Capsule */}
+          <div className="px-3 sm:px-6 pb-3 sm:pb-4 pt-1 shrink-0">
+            <div className="max-w-3xl mx-auto w-full space-y-2">
+              {attachError && (
+                <div className="flex items-center justify-between gap-2 text-xs text-[#ff7d91] px-1">
+                  <span className="truncate">{attachError}</span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {canQuickRetryLast && lastMessage && (
+                      <button
+                        type="button"
+                        onClick={() => void handleRetryMessage(lastMessage.id)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-[#ff7d91]/15 border border-[#ff7d91]/35 px-2 py-1 text-xs font-semibold text-[#eef3fb] hover:bg-[#ff7d91]/25 transition"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Retry</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setAttachError(null)}
+                      aria-label="Dismiss error"
+                      className="text-[#8b9ab0] hover:text-[#eef3fb]"
                     >
-                      <X className="w-3 h-3" />
+                      <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
-                ))}
-              </div>
-            )}
-
-            <div className="flex items-end gap-2">
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={handleAttachImages}
-                className="hidden"
-              />
-              <button
-                type="button"
-                onClick={() => imageInputRef.current?.click()}
-                disabled={addingImage || isStreaming}
-                title="Add chart screenshot (or paste / drop image)"
-                aria-label="Add image"
-                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl glass-subcard text-[#9aa8be] hover:text-[#8df0c0] disabled:opacity-50 transition shrink-0"
-              >
-                {addingImage ? (
-                  <Loader2 className="w-5 h-5 animate-spin text-[#47dca0]" />
-                ) : (
-                  <ImagePlus className="w-5 h-5" />
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => void toggleField('ai-prompt')}
-                disabled={isTranscribing || isStreaming}
-                title={isListening ? 'Stop voice note' : 'Record voice note'}
-                aria-label={isListening ? 'Stop voice note' : 'Record voice note'}
-                className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border transition shrink-0 ${
-                  isListening
-                    ? 'bg-[#ff7d91]/20 border-[#ff7d91]/55 text-[#ff7d91]'
-                    : isTranscribing
-                    ? 'bg-[#47dca0]/15 border-[#47dca0]/40 text-[#8df0c0]'
-                    : 'glass-subcard text-[#9aa8be] hover:text-[#8df0c0]'
-                }`}
-              >
-                {isTranscribing ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : isListening ? (
-                  <Square className="w-4 h-4 fill-current" />
-                ) : (
-                  <Mic className="w-5 h-5" />
-                )}
-              </button>
-
-              <textarea
-                ref={textareaRef}
-                rows={1}
-                value={input}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setInput(val);
-                  if (!val.trim()) {
-                    usedVoiceNoteRef.current = false;
-                  }
-                }}
-                onPaste={handlePaste}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    void handleSend();
-                  }
-                }}
-                placeholder="Ask MSL AI, attach a chart, record voice note, or command the app…"
-                className="flex-1 min-h-[44px] max-h-36 rounded-xl glass-input px-3.5 py-2.5 text-sm text-[#eef3fb] placeholder:text-[#667790] focus:outline-none resize-none leading-snug"
-              />
-
-              {isStreaming ? (
-                <button
-                  type="button"
-                  onClick={handleStop}
-                  aria-label="Stop response"
-                  className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-[#ff7d91]/20 border border-[#ff7d91]/40 text-[#ff7d91] hover:bg-[#ff7d91]/30 transition shrink-0"
-                >
-                  <Square className="w-4 h-4 fill-current" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => void handleSend()}
-                  disabled={!input.trim() && attachments.length === 0}
-                  aria-label="Send message"
-                  className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-[#47dca0] text-[#051612] hover:bg-[#62e4b0] disabled:opacity-40 transition shrink-0"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
+                </div>
               )}
+
+              {voiceState !== 'idle' && !voiceChatActive && (
+                <div className="flex items-center justify-between gap-2 rounded-xl bg-[#47dca0]/10 border border-[#47dca0]/30 px-3 py-2 text-xs text-[#8df0c0]">
+                  <span className="inline-flex items-center gap-2 truncate">
+                    {voiceState === 'loading' ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                    ) : (
+                      <Volume2 className="w-3.5 h-3.5 shrink-0" />
+                    )}
+                    <span className="truncate">
+                      {voiceState === 'loading'
+                        ? 'Preparing UK AI voice…'
+                        : 'Speaking UK AI voice…'}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={stopVoicePlayback}
+                    className="text-xs font-semibold text-[#eef3fb] hover:text-[#ff7d91] transition shrink-0"
+                  >
+                    Stop voice
+                  </button>
+                </div>
+              )}
+
+              {!voiceChatActive && (isListening || isTranscribing || interimText) && (
+                <div className="flex items-center justify-between gap-2 rounded-xl bg-[#47dca0]/10 border border-[#47dca0]/30 px-3 py-2 text-xs text-[#8df0c0]">
+                  <span className="truncate">
+                    {isTranscribing
+                      ? 'Transcribing voice note…'
+                      : interimText ||
+                        'Recording voice note — tap Done when finished'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => stopVoice(false)}
+                    className="text-xs font-semibold underline shrink-0"
+                  >
+                    Done
+                  </button>
+                </div>
+              )}
+
+              <div className="rounded-2xl liquid-glass p-3 sm:p-3.5 space-y-2 focus-within:border-[#47dca0]/45">
+                {attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-2 px-1 pt-0.5">
+                    {attachments.map((att) => (
+                      <div
+                        key={att.id}
+                        className="relative h-14 w-20 rounded-xl overflow-hidden border border-white/[0.15]"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setLightboxImage({ src: att.dataUrl, name: att.name })}
+                          className="h-full w-full block"
+                          aria-label={`Preview ${att.name}`}
+                        >
+                          <img
+                            src={att.dataUrl}
+                            alt={att.name}
+                            referrerPolicy="no-referrer"
+                            className="h-full w-full object-cover"
+                          />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAttachments((prev) => prev.filter((x) => x.id !== att.id))
+                          }
+                          aria-label={`Remove ${att.name}`}
+                          className="absolute top-1 right-1 h-5 w-5 flex items-center justify-center rounded-md bg-black/80 text-white"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <textarea
+                  ref={textareaRef}
+                  rows={2}
+                  value={input}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setInput(val);
+                    if (!val.trim()) {
+                      usedVoiceNoteRef.current = false;
+                    }
+                  }}
+                  onPaste={handlePaste}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e') {
+                      e.preventDefault();
+                      applyCodeFormat();
+                      return;
+                    }
+                    // Shift+Enter creates a new paragraph break; Enter sends on desktop
+                    if (e.key === 'Enter' && e.shiftKey) {
+                      e.preventDefault();
+                      const el = e.currentTarget;
+                      const start = el.selectionStart ?? input.length;
+                      const end = el.selectionEnd ?? input.length;
+                      const prefix = input.slice(0, start);
+                      const br = prefix.endsWith('\n') ? '\n' : '\n\n';
+                      const nextVal = `${prefix}${br}${input.slice(end)}`;
+                      setInput(nextVal);
+                      window.requestAnimationFrame(() => {
+                        el.focus();
+                        const caret = start + br.length;
+                        el.setSelectionRange(caret, caret);
+                      });
+                      return;
+                    }
+                    if (!isTouchDevice && e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      void handleSend();
+                    }
+                  }}
+                  placeholder="Ask MSL AI anything… (Shift+Enter new paragraph, Ctrl/Cmd+E code)"
+                  className="w-full min-h-[54px] max-h-44 bg-transparent px-2 py-1 text-sm text-[#eef3fb] placeholder:text-[#6e7e98] focus:outline-none resize-none leading-relaxed"
+                />
+
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/[0.07]">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      ref={imageInputRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={handleAttachImages}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => imageInputRef.current?.click()}
+                      disabled={addingImage || isStreaming}
+                      title="Attach chart screenshot"
+                      aria-label="Add image"
+                      className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl glass-subcard text-[#9aa8be] hover:text-[#8df0c0] disabled:opacity-50 transition"
+                    >
+                      {addingImage ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-[#47dca0]" />
+                      ) : (
+                        <ImagePlus className="w-4 h-4" />
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void toggleField('ai-prompt')}
+                      disabled={isTranscribing || isStreaming || voiceChatActive}
+                      title={isListening ? 'Stop voice note' : 'Dictate voice note'}
+                      aria-label={isListening ? 'Stop voice note' : 'Record voice note'}
+                      className={`min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl border transition ${
+                        isListening && !isLiveVoiceTurn
+                          ? 'bg-[#ff7d91]/20 border-[#ff7d91]/55 text-[#ff7d91]'
+                          : isTranscribing && !isLiveVoiceTurn
+                          ? 'bg-[#47dca0]/15 border-[#47dca0]/40 text-[#8df0c0]'
+                          : 'glass-subcard text-[#9aa8be] hover:text-[#8df0c0]'
+                      }`}
+                    >
+                      {isTranscribing && !isLiveVoiceTurn ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : isListening && !isLiveVoiceTurn ? (
+                        <Square className="w-3.5 h-3.5 fill-current" />
+                      ) : (
+                        <Mic className="w-4 h-4" />
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={applyCodeFormat}
+                      disabled={isStreaming}
+                      title="Format code snippet or block (Ctrl/Cmd+E)"
+                      aria-label="Format code"
+                      className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl glass-subcard px-2.5 text-xs font-medium text-[#9aa8be] hover:text-[#8df0c0] hover:border-[#47dca0]/40 disabled:opacity-50 transition"
+                    >
+                      <Code className="w-3.5 h-3.5 text-[#8df0c0]" />
+                      <span>Code</span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2.5">
+                    <span className="hidden sm:inline text-[11px] text-[#6d7d96]">
+                      Shift+Enter · paragraph
+                    </span>
+                    {isStreaming ? (
+                      <button
+                        type="button"
+                        onClick={handleStop}
+                        aria-label="Stop response"
+                        className="min-h-[38px] min-w-[38px] px-3 flex items-center justify-center gap-1.5 rounded-xl bg-[#ff7d91]/20 border border-[#ff7d91]/40 text-xs font-semibold text-[#ff7d91] hover:bg-[#ff7d91]/30 transition"
+                      >
+                        <Square className="w-3.5 h-3.5 fill-current" />
+                        <span>Stop</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void handleSend()}
+                        disabled={!input.trim() && attachments.length === 0}
+                        aria-label="Send message"
+                        className="min-h-[38px] min-w-[40px] px-4 flex items-center justify-center gap-1.5 rounded-xl bg-[#47dca0] text-xs font-bold text-[#051612] hover:bg-[#62e4b0] disabled:opacity-40 transition"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Send</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -1510,6 +2321,114 @@ export const AIScreen: React.FC<AIScreenProps> = ({
           </div>
         </div>
       )}
+
+      {/* Persistent Cross-Conversation Memory Modal */}
+      {memoryOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4"
+          onClick={() => setMemoryOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg max-h-[82dvh] flex flex-col rounded-2xl glass-modal p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
+              <div className="flex items-center gap-2">
+                <Brain className="w-4 h-4 text-[#8df0c0]" />
+                <h3 className="font-display text-base font-bold text-[#eef3fb]">
+                  MSL AI Memory
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMemoryOpen(false)}
+                aria-label="Close memory panel"
+                className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl text-[#8b9ab0] hover:text-[#eef3fb]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-[#8b9ab0] leading-relaxed">
+              MSL AI remembers these facts, rules, and preferences automatically across all chats and voice sessions. Say &ldquo;Remember…&rdquo; in chat or add one below.
+            </p>
+
+            {onAddMemory && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const clean = newMemoryText.trim();
+                  if (!clean) return;
+                  void onAddMemory(clean, newMemoryCategory);
+                  setNewMemoryText('');
+                }}
+                className="flex flex-col sm:flex-row gap-2"
+              >
+                <select
+                  value={newMemoryCategory}
+                  onChange={(e) => setNewMemoryCategory(e.target.value as AIMemoryCategory)}
+                  aria-label="Memory category"
+                  className="rounded-xl glass-input px-3 py-2 text-xs text-[#eef3fb] focus:outline-none"
+                >
+                  <option value="preference">Preference</option>
+                  <option value="rule">Rule</option>
+                  <option value="goal">Goal</option>
+                  <option value="context">Context</option>
+                </select>
+                <input
+                  type="text"
+                  value={newMemoryText}
+                  onChange={(e) => setNewMemoryText(e.target.value)}
+                  placeholder="Add something for MSL AI to remember…"
+                  className="flex-1 rounded-xl glass-input px-3 py-2 text-xs text-[#eef3fb] placeholder:text-[#6d7d96] focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={!newMemoryText.trim()}
+                  className="min-h-[36px] inline-flex items-center justify-center gap-1 rounded-xl bg-[#47dca0] px-3.5 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] disabled:opacity-40 transition"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Save</span>
+                </button>
+              </form>
+            )}
+
+            <div className="flex-1 overflow-y-auto space-y-2 pr-0.5">
+              {memories.length === 0 ? (
+                <div className="rounded-xl glass-subcard p-5 text-center text-xs text-[#7f8fa8]">
+                  No memories saved yet. Ask MSL AI to remember your rules or preferences anytime.
+                </div>
+              ) : (
+                memories.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-start justify-between gap-3 rounded-xl glass-subcard px-3.5 py-2.5"
+                  >
+                    <div className="min-w-0 flex-1 space-y-0.5">
+                      <span className="text-[11px] font-semibold capitalize text-[#8df0c0]">
+                        {item.category}
+                      </span>
+                      <p className="text-xs text-[#e4ecf8] leading-relaxed">{item.content}</p>
+                    </div>
+                    {onDeleteMemory && (
+                      <button
+                        type="button"
+                        onClick={() => void onDeleteMemory(item.id)}
+                        aria-label="Delete memory"
+                        className="h-8 w-8 shrink-0 flex items-center justify-center rounded-lg text-[#7f8fa8] hover:text-[#ff7d91] transition"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-};
+});
+
+AIScreen.displayName = 'AIScreen';

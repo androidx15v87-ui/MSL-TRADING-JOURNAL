@@ -1,4 +1,33 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { Check, Copy } from 'lucide-react';
+
+const CodeBlock: React.FC<{ code: string }> = React.memo(({ code }) => {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    void navigator.clipboard?.writeText(code).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    });
+  };
+  return (
+    <div className="my-2.5 overflow-hidden rounded-xl bg-[#070b14]/90 border border-white/[0.1]">
+      <div className="flex items-center justify-end px-3 py-1.5 border-b border-white/[0.06] bg-white/[0.02]">
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="inline-flex items-center gap-1 text-[11px] font-medium text-[#8b9ab0] hover:text-[#8df0c0] transition"
+        >
+          {copied ? <Check className="w-3 h-3 text-[#47dca0]" /> : <Copy className="w-3 h-3" />}
+          <span>{copied ? 'Copied' : 'Copy'}</span>
+        </button>
+      </div>
+      <pre className="overflow-x-auto p-3 font-mono text-xs text-[#d6e2f5]">
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+});
+CodeBlock.displayName = 'CodeBlock';
 
 function renderInline(text: string): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
@@ -64,14 +93,7 @@ export const MarkdownRenderer: React.FC<{ content: string }> = React.memo(({ con
           i++;
         }
         i++; // skip closing fence
-        out.push(
-          <pre
-            key={blockKey++}
-            className="my-2.5 overflow-x-auto rounded-xl bg-[#070b14]/90 border border-white/[0.1] p-3 font-mono text-xs text-[#d6e2f5]"
-          >
-            <code>{codeLines.join('\n')}</code>
-          </pre>
-        );
+        out.push(<CodeBlock key={blockKey++} code={codeLines.join('\n')} />);
         continue;
       }
 

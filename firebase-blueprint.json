@@ -363,6 +363,43 @@
         }
       },
       "required": ["id", "userId", "name", "time", "enabled", "sortOrder", "createdAt", "updatedAt"]
+    },
+    "AIMemoryRecord": {
+      "title": "AI Memory Item",
+      "description": "Durable cross-conversation memory item (preference, trading rule, goal, or personal context) remembered by MSL AI.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "category": {
+          "type": "string",
+          "enum": ["preference", "rule", "goal", "context"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "userId", "content", "category", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -389,6 +426,10 @@
     "/users/{userId}/alarms/{alarmId}": {
       "schema": { "$ref": "#/entities/SessionAlarmRecord" },
       "description": "Trader's configured session alarms."
+    },
+    "/users/{userId}/aiMemories/{memoryId}": {
+      "schema": { "$ref": "#/entities/AIMemoryRecord" },
+      "description": "Persistent cross-conversation memories saved for MSL AI."
     }
   }
 }

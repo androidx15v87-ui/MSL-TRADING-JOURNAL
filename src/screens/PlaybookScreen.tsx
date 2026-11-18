@@ -7,7 +7,7 @@ interface PlaybookScreenProps {
   onSavePlaybook: (playbook: Playbook) => Promise<void> | void;
 }
 
-export const PlaybookScreen: React.FC<PlaybookScreenProps> = ({
+export const PlaybookScreen: React.FC<PlaybookScreenProps> = React.memo(({
   playbook,
   onSavePlaybook,
 }) => {
@@ -39,7 +39,7 @@ export const PlaybookScreen: React.FC<PlaybookScreenProps> = ({
     <form onSubmit={handleSave} className="space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+          <p className="text-xs font-medium text-[#8df0c0]">
             The rules you follow
           </p>
           <h2 className="mt-0.5 font-display text-2xl font-extrabold text-[#eef3fb]">
@@ -120,4 +120,6 @@ export const PlaybookScreen: React.FC<PlaybookScreenProps> = ({
       </div>
     </form>
   );
-};
+});
+
+PlaybookScreen.displayName = 'PlaybookScreen';

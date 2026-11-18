@@ -8,12 +8,14 @@ import React, {
   useState,
 } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { AppLockScreen } from './components/AppLockScreen';
 import { ConfirmModal } from './components/ConfirmModal';
 import { Layout } from './components/Layout';
 import { OfflineBanner } from './components/OfflineBanner';
 import { TradeDetailModal } from './components/TradeDetailModal';
 import { TradeModal } from './components/TradeModal';
 import { useFirebase } from './context/FirebaseContext';
+import { isAppLockEnabled, saveLockAccountName } from './lib/appLock';
 import { createDefaultState, QUOTES, type QuoteItem } from './data/quotes';
 import {
   formatR,
@@ -23,10 +25,18 @@ import {
   localDateTime,
 } from './lib/calculations';
 import {
+  loadAIMemories,
+  removeAIMemory,
+  saveAIMemories,
+  upsertAIMemory,
+} from './lib/aiMemory';
+import {
+  cloudDeleteAIMemory,
   cloudDeleteField,
   cloudDeleteModel,
   cloudDeleteTrade,
   cloudReplaceFullJournal,
+  cloudSaveAIMemory,
   cloudSaveAlarmsAndSettings,
   cloudSaveField,
   cloudSaveModel,
@@ -36,6 +46,7 @@ import {
   ensureCloudWorkspace,
   mergeMissingLocalTradesToCloud,
   subscribeToCloudJournal,
+  subscribeToCloudMemories,
 } from './lib/cloudSync';
 import {
   buildBackupPayload,
@@ -52,6 +63,8 @@ import { OverviewScreen } from './screens/OverviewScreen';
 import type {
   AIAppAction,
   AIAppActionResult,
+  AIMemoryCategory,
+  AIMemoryItem,
   CustomField,
   Direction,
   JournalSettings,
@@ -162,8 +175,10 @@ export default function App() {
   const [hydrated, setHydrated] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
   const [splashPhase, setSplashPhase] = useState<1 | 2>(1);
+  const [isLocked, setIsLocked] = useState<boolean>(() => isAppLockEnabled());
   const [activePage, setActivePage] = useState<PageId>('dashboard');
   const [aiMounted, setAiMounted] = useState(false);
+  const [memories, setMemories] = useState<AIMemoryItem[]>(() => loadAIMemories());
   const [quote, setQuote] = useState<QuoteItem>(() => randomQuote());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -194,6 +209,8 @@ export default function App() {
   const splashStartRef = useRef<number>(Date.now());
   const stateRef = useRef<JournalState>(state);
   stateRef.current = state;
+  const memoriesRef = useRef<AIMemoryItem[]>(memories);
+  memoriesRef.current = memories;
   const userRef = useRef(user);
   userRef.current = user;
   const mergedForSessionRef = useRef<string | null>(null);
@@ -205,6 +222,16 @@ export default function App() {
       setToastMessage(null);
     }, 3200);
   }, []);
+
+  const accountDisplayName = useMemo(
+    () => (state.profile.name || user?.displayName || '').trim(),
+    [state.profile.name, user?.displayName]
+  );
+
+  useEffect(() => {
+    if (!hydrated) return;
+    saveLockAccountName(accountDisplayName);
+  }, [accountDisplayName, hydrated]);
 
   // Hydrate full journal state from IndexedDB on boot
   useEffect(() => {
@@ -234,6 +261,8 @@ export default function App() {
 
   useEffect(() => {
     if (!hydrated) return;
+    // Warm up /api/health connection & lazy screen chunks during splash so interactions hit warm connections
+    void fetch('/api/health').catch(() => {});
     const timer = window.setTimeout(() => {
       void import('./screens/JournalScreen');
       void import('./screens/CalendarScreen');
@@ -242,7 +271,7 @@ export default function App() {
       void import('./screens/PlaybookScreen');
       void import('./screens/AIScreen');
       void import('./screens/SettingsScreen');
-    }, 120);
+    }, 80);
     return () => window.clearTimeout(timer);
   }, [hydrated]);
 
@@ -258,6 +287,8 @@ export default function App() {
 
     let cancelled = false;
     let unsub: (() => void) | null = null;
+    let unsubMemories: (() => void) | null = null;
+    let pushedLocalMemories = false;
     const preSyncSnapshot = stateRef.current;
 
     const initCloud = async () => {
@@ -329,6 +360,28 @@ export default function App() {
             setCloudError(msg);
           }
         );
+
+        unsubMemories = subscribeToCloudMemories(user.uid, (cloudMemories) => {
+          if (cancelled) return;
+          if (!pushedLocalMemories) {
+            pushedLocalMemories = true;
+            const cloudTexts = new Set(cloudMemories.map((m) => m.content.trim().toLowerCase()));
+            const localOnly = memoriesRef.current.filter(
+              (m) => !cloudTexts.has(m.content.trim().toLowerCase())
+            );
+            for (const item of localOnly) {
+              void cloudSaveAIMemory(user.uid, item).catch(() => {});
+            }
+            if (localOnly.length > 0) {
+              const merged = [...localOnly, ...cloudMemories];
+              setMemories(merged);
+              saveAIMemories(merged);
+              return;
+            }
+          }
+          setMemories(cloudMemories);
+          saveAIMemories(cloudMemories);
+        });
       } catch (err) {
         if (cancelled) return;
         const msg = formatCloudErrorMessage(err);
@@ -343,21 +396,22 @@ export default function App() {
     return () => {
       cancelled = true;
       if (unsub) unsub();
+      if (unsubMemories) unsubMemories();
     };
   }, [hydrated, authReady, user, setCloudStatus, setCloudError, showToast]);
 
-  // App opening double animation (5 seconds total: 0-2.4s Orbital Crest -> 2.4-5.0s Edge Readiness)
+  // Two-part 6-second Liquid-Glass opening animation (0–3s Brand Reveal -> 3–6s Execution Mantra)
   useEffect(() => {
     const phaseTimer = window.setTimeout(() => {
       setSplashPhase(2);
-    }, 2400);
+    }, 3000);
     return () => window.clearTimeout(phaseTimer);
   }, []);
 
   useEffect(() => {
     if (!hydrated) return;
     const elapsed = Date.now() - splashStartRef.current;
-    const remaining = Math.max(0, 5000 - elapsed);
+    const remaining = Math.max(0, 6000 - elapsed);
     const timer = window.setTimeout(() => {
       setShowSplash(false);
     }, remaining);
@@ -835,6 +889,43 @@ export default function App() {
               label: 'Refreshed discipline quote',
               ok: true,
             });
+          } else if (action.name === 'save_memory') {
+            const res = upsertAIMemory(
+              memoriesRef.current,
+              String(action.args?.content || ''),
+              action.args?.category
+            );
+            if (res) {
+              memoriesRef.current = res.nextList;
+              setMemories(res.nextList);
+              if (activeUser) {
+                await cloudSaveAIMemory(activeUser.uid, res.item).catch(() => {});
+              }
+              results.push({
+                name: action.name,
+                label: `Remembered: ${res.item.content.slice(0, 56)}${res.item.content.length > 56 ? '…' : ''}`,
+                ok: true,
+              });
+            }
+          } else if (action.name === 'forget_memory') {
+            const res = removeAIMemory(memoriesRef.current, {
+              memoryId: action.args?.memoryId,
+              query: action.args?.query,
+            });
+            if (res.removed.length > 0) {
+              memoriesRef.current = res.nextList;
+              setMemories(res.nextList);
+              if (activeUser) {
+                for (const item of res.removed) {
+                  await cloudDeleteAIMemory(activeUser.uid, item.id).catch(() => {});
+                }
+              }
+              results.push({
+                name: action.name,
+                label: `Forgot ${res.removed.length} memory item${res.removed.length > 1 ? 's' : ''}`,
+                ok: true,
+              });
+            }
           }
         } catch {
           results.push({
@@ -850,6 +941,30 @@ export default function App() {
     [handleCycleQuote, handleOpenNewTrade, showToast]
   );
 
+  const handleAddMemoryManual = useCallback(
+    async (content: string, category: AIMemoryCategory) => {
+      const res = upsertAIMemory(memoriesRef.current, content, category);
+      if (!res) return;
+      memoriesRef.current = res.nextList;
+      setMemories(res.nextList);
+      if (userRef.current) {
+        await cloudSaveAIMemory(userRef.current.uid, res.item).catch(() => {});
+      }
+      showToast('Memory saved.');
+    },
+    [showToast]
+  );
+
+  const handleDeleteMemoryManual = useCallback(async (id: string) => {
+    const res = removeAIMemory(memoriesRef.current, { memoryId: id });
+    if (res.removed.length === 0) return;
+    memoriesRef.current = res.nextList;
+    setMemories(res.nextList);
+    if (userRef.current) {
+      await cloudDeleteAIMemory(userRef.current.uid, id).catch(() => {});
+    }
+  }, []);
+
   const handleDownloadBackup = () => {
     const payload = buildBackupPayload(state);
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
@@ -858,7 +973,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `MSL-Journal-v10.2.1-backup-${isoDate(new Date())}.json`;
+    a.download = `MSL-Journal-v10.5.4-backup-${isoDate(new Date())}.json`;
     a.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     showToast('Full backup downloaded.');
@@ -978,92 +1093,165 @@ export default function App() {
 
   return (
     <>
-      {/* 5-Second Liquid-Glass Double Opening Animation */}
+      {/* Refined 2-Part 6-Second Liquid-Glass Entry Animation (Auto-Completes at 6.0s) */}
       <AnimatePresence>
         {showSplash && (
           <motion.div
             initial={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 1.03 }}
+            exit={{ opacity: 0, scale: 1.02 }}
             transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#080d18]/96 backdrop-blur-2xl px-6 select-none overflow-hidden"
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-[#080d18]/98 backdrop-blur-2xl px-6 select-none overflow-hidden"
           >
-            {/* Ambient radial glow */}
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="h-72 w-72 rounded-full bg-[#47dca0]/12 blur-3xl" />
-            </div>
+            {/* Ambient Dual-Tone Radial Depth */}
+            <motion.div
+              initial={{ opacity: 0.25, scale: 0.9 }}
+              animate={{ opacity: [0.25, 0.48, 0.3], scale: [0.9, 1.06, 1] }}
+              transition={{ duration: 6, ease: 'easeInOut' }}
+              className="pointer-events-none absolute h-80 w-80 rounded-full bg-[radial-gradient(circle,rgba(71,220,160,0.16)_0%,rgba(142,190,255,0.08)_50%,transparent_75%)] blur-2xl"
+            />
 
             <motion.div
-              initial={{ opacity: 0, y: 20, scale: 0.92 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
+              initial={{ opacity: 0, scale: 0.92, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
               transition={{ duration: 0.65, ease: [0.16, 1, 0.3, 1] }}
-              className="relative glass-card rounded-3xl px-8 py-8 flex flex-col items-center text-center max-w-xs w-full overflow-hidden"
+              className="relative liquid-glass rounded-3xl px-8 py-10 w-full max-w-[324px] text-center overflow-hidden"
             >
+              {/* Soft Specular Sheen Sweep */}
+              <div className="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-transparent via-white/[0.08] to-transparent splash-sheen" />
+
               <AnimatePresence mode="wait">
                 {splashPhase === 1 ? (
                   <motion.div
-                    key="splash-phase-1"
+                    key="splash-step-1"
                     initial={{ opacity: 0, y: 12, scale: 0.94 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -14, scale: 0.94 }}
-                    transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-                    className="flex flex-col items-center"
+                    exit={{ opacity: 0, y: -14, scale: 0.95 }}
+                    transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+                    className="flex flex-col items-center gap-4"
                   >
-                    {/* Orbital double-ring crest */}
-                    <div className="relative h-20 w-20 flex items-center justify-center">
-                      <div className="absolute inset-0 rounded-full border border-[#47dca0]/35 border-t-[#8df0c0] animate-orbit-slow" />
-                      <div className="absolute inset-1.5 rounded-full border border-[#8ebeff]/25 border-b-[#8ebeff] animate-orbit-reverse" />
-                      <div className="h-14 w-14 rounded-2xl border border-white/25 bg-gradient-to-br from-[#1d3e42]/90 to-[#0d1d2d]/90 flex items-center justify-center font-display text-lg font-extrabold tracking-tight text-[#8df0c0] shadow-[inset_0_1px_0_rgba(255,255,255,0.28)]">
+                    <div className="relative flex items-center justify-center">
+                      <motion.div
+                        initial={{ rotate: -24, scale: 0.82, opacity: 0 }}
+                        animate={{ rotate: 0, scale: 1, opacity: 1 }}
+                        transition={{ duration: 0.85, ease: [0.16, 1, 0.3, 1] }}
+                        className="absolute -inset-2 rounded-[22px] border border-[#47dca0]/25"
+                      />
+                      <motion.div
+                        initial={{ scale: 0.86, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{ duration: 0.6, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
+                        className="relative h-16 w-16 rounded-2xl border border-white/25 bg-gradient-to-br from-[#234b50]/90 to-[#0c1b2c]/95 flex items-center justify-center font-display text-xl font-extrabold tracking-tight text-[#8df0c0] shadow-[inset_0_1px_0_rgba(255,255,255,0.3)]"
+                      >
                         MSL
-                      </div>
+                      </motion.div>
                     </div>
 
-                    <p className="mt-4 font-display text-xl font-extrabold tracking-tight text-[#eef3fb]">
-                      MSL Journal <span className="text-[#47dca0]">✦</span>
-                    </p>
-                    <p className="mt-1 text-[11px] font-semibold tracking-[0.2em] text-[#8b9ab0] uppercase">
-                      Version 10.2.1
-                    </p>
+                    <div className="w-full space-y-2">
+                      <motion.p
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.5, delay: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                        className="font-display text-2xl font-extrabold tracking-tight text-[#eef3fb]"
+                      >
+                        MSL Journal
+                      </motion.p>
+                      <motion.div
+                        initial={{ scaleX: 0, opacity: 0 }}
+                        animate={{ scaleX: 1, opacity: 1 }}
+                        transition={{ duration: 0.65, delay: 0.38, ease: [0.16, 1, 0.3, 1] }}
+                        className="mx-auto h-px w-24 bg-gradient-to-r from-transparent via-[#47dca0]/70 to-transparent origin-center"
+                      />
+                      <motion.p
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.5, delay: 0.55 }}
+                        className="text-xs font-medium text-[#8b9ab0] tabular-nums"
+                      >
+                        Version 10.5.4
+                      </motion.p>
+                    </div>
                   </motion.div>
                 ) : (
                   <motion.div
-                    key="splash-phase-2"
-                    initial={{ opacity: 0, y: 14, scale: 0.95 }}
+                    key="splash-step-2"
+                    initial={{ opacity: 0, y: 14, scale: 0.96 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, scale: 1.03 }}
-                    transition={{ duration: 0.48, ease: [0.16, 1, 0.3, 1] }}
-                    className="flex flex-col items-center"
+                    transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+                    className="py-1.5 flex flex-col items-center gap-4"
                   >
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#47dca0]/15 border border-[#47dca0]/40 px-3 py-1 text-[11px] font-bold tracking-wider text-[#8df0c0] uppercase">
-                      Edge &amp; Execution Ready
-                    </span>
+                    <svg
+                      viewBox="0 0 180 34"
+                      className="w-44 h-8 overflow-visible"
+                      aria-hidden="true"
+                    >
+                      <motion.path
+                        d="M 4 26 Q 42 26, 66 18 T 118 14 T 176 4"
+                        fill="none"
+                        stroke="url(#splashCurveGrad)"
+                        strokeWidth="2.4"
+                        strokeLinecap="round"
+                        initial={{ pathLength: 0, opacity: 0.25 }}
+                        animate={{ pathLength: 1, opacity: 1 }}
+                        transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
+                      />
+                      <motion.circle
+                        cx="176"
+                        cy="4"
+                        r="3.2"
+                        fill="#8df0c0"
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{ scale: [0, 1.35, 1], opacity: 1 }}
+                        transition={{ duration: 0.45, delay: 0.95, ease: [0.16, 1, 0.3, 1] }}
+                      />
+                      <defs>
+                        <linearGradient id="splashCurveGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                          <stop offset="0%" stopColor="#8ebeff" stopOpacity="0.4" />
+                          <stop offset="55%" stopColor="#47dca0" stopOpacity="0.95" />
+                          <stop offset="100%" stopColor="#8df0c0" stopOpacity="1" />
+                        </linearGradient>
+                      </defs>
+                    </svg>
 
-                    <p className="mt-4 font-display text-lg font-extrabold tracking-tight text-[#eef3fb]">
-                      Read the market.
-                      <br />
-                      <span className="text-[#47dca0]">Respect the plan.</span>
-                    </p>
-
-                    <div className="mt-3 flex items-center gap-2 text-[11px] font-medium text-[#9aa8be]">
-                      <span className="rounded-lg bg-white/[0.06] border border-white/[0.08] px-2.5 py-1">
-                        {state.trades.length} Trades
-                      </span>
-                      <span className="rounded-lg bg-white/[0.06] border border-white/[0.08] px-2.5 py-1">
-                        {user ? 'Cloud Sync' : 'Local Vault'}
-                      </span>
+                    <div className="space-y-1">
+                      <motion.p
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.45, delay: 0.12, ease: [0.16, 1, 0.3, 1] }}
+                        className="font-display text-xl font-extrabold tracking-tight text-[#eef3fb] leading-snug"
+                      >
+                        Read the market.
+                      </motion.p>
+                      <motion.p
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.45, delay: 0.36, ease: [0.16, 1, 0.3, 1] }}
+                        className="font-display text-xl font-extrabold tracking-tight text-[#47dca0] leading-snug"
+                      >
+                        Respect the plan.
+                      </motion.p>
                     </div>
                   </motion.div>
                 )}
               </AnimatePresence>
 
-              {/* Unified 5-second liquid-glass progress bar */}
-              <div className="mt-6 h-1.5 w-44 rounded-full bg-white/10 overflow-hidden">
-                <div className="h-full w-full rounded-full bg-gradient-to-r from-[#47dca0] via-[#8df0c0] to-[#8ebeff] animate-splash-bar" />
+              {/* Continuous 6.0s compositor hairline load progress */}
+              <div className="mt-7 h-0.5 w-full rounded-full bg-white/[0.08] overflow-hidden">
+                <div className="h-full w-full rounded-full bg-gradient-to-r from-[#8ebeff] via-[#47dca0] to-[#8df0c0] splash-progress-fill" />
               </div>
-              <p className="mt-2.5 text-[11px] font-medium text-[#7c8ca3]">
-                {splashPhase === 1 ? 'Initializing workspace…' : 'Syncing your trading edge…'}
-              </p>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 4-Digit PIN Lock Gate Shown Right After Entry Animation */}
+      <AnimatePresence>
+        {!showSplash && isLocked && (
+          <AppLockScreen
+            accountName={accountDisplayName}
+            accountLoaded={hydrated}
+            onUnlock={() => setIsLocked(false)}
+          />
         )}
       </AnimatePresence>
 
@@ -1097,6 +1285,9 @@ export default function App() {
                 <div className={activePage === 'ai' ? 'block' : 'hidden'}>
                   <AIScreen
                     journalState={state}
+                    memories={memories}
+                    onAddMemory={handleAddMemoryManual}
+                    onDeleteMemory={handleDeleteMemoryManual}
                     onExecuteAIActions={handleExecuteAIActions}
                   />
                 </div>
@@ -1178,6 +1369,7 @@ export default function App() {
                       onSignIn={handleSignIn}
                       onSignOut={handleSignOut}
                       onForceSyncToCloud={handleForceSyncToCloud}
+                      onLockApp={() => setIsLocked(true)}
                       onToast={showToast}
                     />
                   )}

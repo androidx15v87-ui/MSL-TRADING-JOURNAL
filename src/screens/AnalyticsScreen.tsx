@@ -23,7 +23,7 @@ interface AnalyticsScreenProps {
   onSelectTrade: (trade: Trade) => void;
 }
 
-export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
+export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
   trades,
   onSelectTrade,
 }) => {
@@ -72,7 +72,7 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
   return (
     <div className="space-y-5">
       <div>
-        <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+        <p className="text-xs font-medium text-[#8df0c0]">
           Measure the edge
         </p>
         <h2 className="mt-0.5 font-display text-2xl font-extrabold text-[#eef3fb]">
@@ -82,6 +82,40 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
           Computed directly from your logged trades. Audit expectancy, drawdown, sessions, and behavioral tags.
         </p>
       </div>
+
+      {/* Featured Total PnL Liquid-Glass Breakdown */}
+      <section aria-label="Total PnL Summary" className="rounded-2xl liquid-glass p-5">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 items-center">
+          <div>
+            <p className="text-xs font-medium text-[#8b9ab0]">Total Net PnL</p>
+            <p
+              className={`mt-1.5 font-mono text-2xl sm:text-3xl font-bold tabular-nums tracking-tight ${
+                stats.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
+              }`}
+            >
+              {formatR(stats.netR)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-[#8b9ab0]">Total Profits</p>
+            <p className="mt-1.5 font-mono text-xl sm:text-2xl font-bold tabular-nums text-[#47dca0]">
+              +{stats.grossWin.toFixed(2)}R
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-[#8b9ab0]">Total Losses</p>
+            <p className="mt-1.5 font-mono text-xl sm:text-2xl font-bold tabular-nums text-[#ff7d91]">
+              -{stats.grossLoss.toFixed(2)}R
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-[#8b9ab0]">Profit Factor</p>
+            <p className="mt-1.5 font-mono text-xl sm:text-2xl font-bold tabular-nums text-[#eef3fb]">
+              {stats.profitFactor === Infinity ? '∞' : stats.profitFactor.toFixed(2)}
+            </p>
+          </div>
+        </div>
+      </section>
 
       {/* Top 4 Core Analytics Stat Cards */}
       <section className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
@@ -170,7 +204,7 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
         <article className="rounded-2xl glass-card p-5">
           <div className="flex items-center justify-between gap-4 pb-3 border-b border-white/[0.08]">
             <div>
-              <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+              <p className="text-xs font-medium text-[#8df0c0]">
                 Equity progression
               </p>
               <h3 className="text-base font-bold text-[#eef3fb]">Cumulative R curve</h3>
@@ -251,6 +285,7 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
                   stroke={finalEquityR < 0 ? '#ff7d91' : '#47dca0'}
                   strokeWidth={2.5}
                   fill="url(#analyticsEqFill)"
+                  animationDuration={240}
                   dot={{ r: 3, fill: finalEquityR < 0 ? '#ff7d91' : '#8df0c0', strokeWidth: 0 }}
                   activeDot={{ r: 5, fill: '#eef3fb' }}
                 />
@@ -453,4 +488,6 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
       </article>
     </div>
   );
-};
+});
+
+AnalyticsScreen.displayName = 'AnalyticsScreen';

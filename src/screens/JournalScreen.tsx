@@ -18,7 +18,7 @@ interface JournalScreenProps {
   onExportCSV: (filteredTrades: Trade[]) => void;
 }
 
-export const JournalScreen: React.FC<JournalScreenProps> = ({
+export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
   trades,
   onOpenNewTrade,
   onSelectTrade,
@@ -77,7 +77,7 @@ export const JournalScreen: React.FC<JournalScreenProps> = ({
       {/* Header Intro */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+          <p className="text-xs font-medium text-[#8df0c0]">
             Trade database
           </p>
           <h2 className="mt-0.5 font-display text-2xl font-extrabold text-[#eef3fb]">
@@ -188,7 +188,7 @@ export const JournalScreen: React.FC<JournalScreenProps> = ({
         {/* Interactive Label / Tag Filter Bar */}
         {availableTags.length > 0 && (
           <div className="pt-2 border-t border-white/[0.07] flex items-center gap-2 overflow-x-auto pb-0.5">
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#7f8fa8] uppercase tracking-wider shrink-0 pr-1">
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-[#7f8fa8] shrink-0 pr-1">
               <Tag className="w-3.5 h-3.5 text-[#8df0c0]" />
               Tags
             </span>
@@ -234,13 +234,27 @@ export const JournalScreen: React.FC<JournalScreenProps> = ({
               <>
                 <span aria-hidden="true">·</span>
                 <span>
-                  Net{' '}
+                  Total PnL{' '}
                   <strong
                     className={`font-mono ${
                       filteredStats.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
                     }`}
                   >
                     {formatR(filteredStats.netR)}
+                  </strong>
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  Profit{' '}
+                  <strong className="font-mono text-[#47dca0]">
+                    +{filteredStats.grossWin.toFixed(1)}R
+                  </strong>
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  Loss{' '}
+                  <strong className="font-mono text-[#ff7d91]">
+                    -{filteredStats.grossLoss.toFixed(1)}R
                   </strong>
                 </span>
                 <span aria-hidden="true">·</span>
@@ -315,7 +329,7 @@ export const JournalScreen: React.FC<JournalScreenProps> = ({
                   key={t.id}
                   type="button"
                   onClick={() => onSelectTrade(t)}
-                  className="w-full rounded-2xl glass-card p-4 text-left hover:border-white/20 active:scale-[0.995] transition"
+                  className="perf-row w-full rounded-2xl glass-card p-4 text-left hover:border-white/20 active:scale-[0.995] transition"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -361,7 +375,7 @@ export const JournalScreen: React.FC<JournalScreenProps> = ({
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-white/[0.08] text-[11px] font-semibold tracking-wider text-[#7f8fa8] uppercase">
+                  <tr className="border-b border-white/[0.08] text-xs font-semibold text-[#7f8fa8]">
                     <th className="py-3.5 px-4">Date</th>
                     <th className="py-3.5 px-4">Symbol</th>
                     <th className="py-3.5 px-4">Side</th>
@@ -434,4 +448,6 @@ export const JournalScreen: React.FC<JournalScreenProps> = ({
       )}
     </div>
   );
-};
+});
+
+JournalScreen.displayName = 'JournalScreen';

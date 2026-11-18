@@ -87,6 +87,8 @@ export async function requestAppNotifications(alarms: SessionAlarm[]): Promise<{
   }
 }
 
+let cachedSwReg: ServiceWorkerRegistration | null | undefined;
+
 export async function sendLocalNotification(
   title: string,
   body: string,
@@ -97,9 +99,11 @@ export async function sendLocalNotification(
 
   try {
     if ('serviceWorker' in navigator) {
-      const reg = await navigator.serviceWorker.getRegistration();
-      if (reg && typeof reg.showNotification === 'function') {
-        await reg.showNotification(title, {
+      if (cachedSwReg === undefined) {
+        cachedSwReg = (await navigator.serviceWorker.getRegistration()) || null;
+      }
+      if (cachedSwReg && typeof cachedSwReg.showNotification === 'function') {
+        await cachedSwReg.showNotification(title, {
           body,
           icon: '/pwa-192x192.png',
           badge: '/pwa-192x192.png',
@@ -109,7 +113,7 @@ export async function sendLocalNotification(
       }
     }
   } catch {
-    // Fall back to direct Notification constructor
+    cachedSwReg = null;
   }
 
   try {
@@ -135,34 +139,42 @@ export async function evaluateAlarmsAndQuotes(
   settings: JournalSettings,
   lastKey: string
 ): Promise<AlarmTickResult> {
+  const hasEnabledAlarm = alarms.some((a) => a.enabled);
+  const canQuoteNotify =
+    settings.quoteNotifications &&
+    settings.quoteFrequency > 0 &&
+    getNotificationPermission() === 'granted';
+
+  if (!hasEnabledAlarm && !canQuoteNotify) {
+    return { triggeredKey: null };
+  }
+
   const now = new Date();
   const day = isoDate(now);
   const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-  for (const alarm of alarms) {
-    if (!alarm.enabled || alarm.time !== hm) continue;
-    const key = `alarm:${day}:${alarm.id}:${alarm.time}`;
-    if (lastKey === key) continue;
+  if (hasEnabledAlarm) {
+    for (const alarm of alarms) {
+      if (!alarm.enabled || alarm.time !== hm) continue;
+      const key = `alarm:${day}:${alarm.id}:${alarm.time}`;
+      if (lastKey === key) continue;
 
-    const quote = QUOTES[Math.floor(Math.random() * QUOTES.length)];
-    await sendLocalNotification(
-      `${alarm.name} reminder`,
-      `${quote.text} — ${quote.source}`,
-      key
-    );
+      const quote = QUOTES[Math.floor(Math.random() * QUOTES.length)];
+      await sendLocalNotification(
+        `${alarm.name} reminder`,
+        `${quote.text} — ${quote.source}`,
+        key
+      );
 
-    return {
-      triggeredKey: key,
-      toastMessage: `${alarm.name} reminder`,
-      quote: settings.quoteNotifications ? quote : undefined,
-    };
+      return {
+        triggeredKey: key,
+        toastMessage: `${alarm.name} reminder`,
+        quote: settings.quoteNotifications ? quote : undefined,
+      };
+    }
   }
 
-  if (
-    settings.quoteNotifications &&
-    settings.quoteFrequency > 0 &&
-    getNotificationPermission() === 'granted'
-  ) {
+  if (canQuoteNotify) {
     const minute = Math.floor(now.getTime() / 60000);
     if (minute % settings.quoteFrequency === 0 && now.getSeconds() < 15) {
       const key = `quote:${day}:${minute}`;

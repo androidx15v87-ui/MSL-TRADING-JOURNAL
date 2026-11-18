@@ -15,7 +15,7 @@ export default defineConfig(() => {
         includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
         manifest: {
           id: '/',
-          name: 'MSL Trading Journal v10.2.1',
+          name: 'MSL Trading Journal v10.5.4',
           short_name: 'MSL Journal',
           description: 'Private, local-first, offline-ready trading journal. Read the market. Respect the plan.',
           theme_color: '#080d18',
@@ -125,6 +125,9 @@ export default defineConfig(() => {
             }
             if (id.includes('/motion/') || id.includes('/framer-motion/')) {
               return 'vendor-motion';
+            }
+            if (id.includes('/lucide-react/')) {
+              return 'vendor-icons';
             }
             return undefined;
           },

@@ -264,6 +264,35 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidAIMemory(data, userId, memoryId) {
+      return data.keys().hasAll([
+          'id',
+          'userId',
+          'content',
+          'category',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'userId',
+          'content',
+          'category',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == memoryId
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && data.userId == userId
+        && isBoundedString(data.content, 1, 600)
+        && data.category is string
+        && data.category in ['preference', 'rule', 'goal', 'context']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // --- Collection Rules ---
     match /users/{userId} {
       allow get: if isOwner(userId) && isValidId(userId) && (resource == null || existing().uid == request.auth.uid);
@@ -442,6 +471,32 @@ service cloud.firestore {
             'updatedAt'
           ]);
         allow delete: if isOwner(userId) && isValidId(alarmId) && hasWorkspace(userId) && existing().userId == request.auth.uid;
+      }
+
+      match /aiMemories/{memoryId} {
+        allow get: if isOwner(userId) && isValidId(memoryId) && hasWorkspace(userId) && (resource == null || existing().userId == request.auth.uid);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(memoryId)
+          && isValidAIMemory(incoming(), userId, memoryId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasWorkspace(userId);
+        allow update: if isOwner(userId)
+          && isValidId(memoryId)
+          && isValidAIMemory(incoming(), userId, memoryId)
+          && hasWorkspace(userId)
+          && existing().userId == request.auth.uid
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'content',
+            'category',
+            'updatedAt'
+          ]);
+        allow delete: if isOwner(userId) && isValidId(memoryId) && hasWorkspace(userId) && existing().userId == request.auth.uid;
       }
     }
   }

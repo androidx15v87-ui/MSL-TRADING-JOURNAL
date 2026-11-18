@@ -59,25 +59,23 @@ h1, h2, h3, h4, .font-display {
   font-variant-numeric: tabular-nums;
 }
 
-/* Refined Liquid Glass Surfaces — Single-Elevation Hairline Architecture */
+/* GPU-Fast Obsidian Glass Surfaces — Single-Elevation Hairline Architecture */
 .glass-card {
   position: relative;
   contain: layout style;
   background: linear-gradient(
-    160deg,
-    rgba(20, 32, 56, 0.72) 0%,
-    rgba(11, 18, 33, 0.76) 60%,
-    rgba(9, 14, 27, 0.84) 100%
+    162deg,
+    rgba(21, 33, 58, 0.92) 0%,
+    rgba(11, 18, 34, 0.95) 58%,
+    rgba(8, 13, 25, 0.97) 100%
   );
-  backdrop-filter: blur(18px) saturate(155%);
-  -webkit-backdrop-filter: blur(18px) saturate(155%);
-  border: 1px solid rgba(255, 255, 255, 0.095);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    0 14px 36px -16px rgba(2, 6, 16, 0.7);
+    inset 0 1px 0 rgba(255, 255, 255, 0.13),
+    0 12px 30px -16px rgba(2, 6, 16, 0.72);
   transition:
-    border-color 160ms cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 160ms cubic-bezier(0.16, 1, 0.3, 1);
+    border-color 150ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .glass-card::after {
@@ -88,21 +86,21 @@ h1, h2, h3, h4, .font-display {
   pointer-events: none;
   opacity: 0;
   background: radial-gradient(
-    460px circle at 50% 0%,
-    rgba(71, 220, 160, 0.085),
+    420px circle at 50% 0%,
+    rgba(71, 220, 160, 0.08),
     rgba(142, 190, 255, 0.035) 45%,
     transparent 75%
   );
-  transition: opacity 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 160ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .glass-card:hover {
     border-color: rgba(141, 240, 192, 0.24);
     box-shadow:
-      inset 0 1px 0 rgba(141, 240, 192, 0.2),
-      0 18px 42px -16px rgba(2, 6, 16, 0.78),
-      0 0 28px -10px rgba(71, 220, 160, 0.18);
+      inset 0 1px 0 rgba(141, 240, 192, 0.22),
+      0 16px 36px -16px rgba(2, 6, 16, 0.78),
+      0 0 24px -10px rgba(71, 220, 160, 0.16);
   }
 
   .glass-card:hover::after {
@@ -114,29 +112,134 @@ h1, h2, h3, h4, .font-display {
   border-color: rgba(141, 240, 192, 0.22);
 }
 
+/* Selective Liquid Glass Display Surface (Hero / Key Telemetry / AI Composer / Splash) */
+.liquid-glass {
+  position: relative;
+  contain: layout style;
+  background: linear-gradient(
+    148deg,
+    rgba(28, 46, 79, 0.72) 0%,
+    rgba(13, 22, 40, 0.82) 48%,
+    rgba(8, 14, 27, 0.9) 100%
+  );
+  backdrop-filter: blur(22px) saturate(175%);
+  -webkit-backdrop-filter: blur(22px) saturate(175%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -1px 0 rgba(142, 190, 255, 0.08),
+    0 18px 46px -18px rgba(2, 6, 16, 0.78);
+  transition:
+    border-color 150ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.liquid-glass::before {
+  content: "";
+  position: absolute;
+  inset: 0 1px auto 1px;
+  height: 44%;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.015) 60%,
+    transparent 100%
+  );
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .liquid-glass:hover {
+    border-color: rgba(141, 240, 192, 0.28);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.26),
+      inset 0 -1px 0 rgba(71, 220, 160, 0.12),
+      0 20px 50px -18px rgba(2, 6, 16, 0.84),
+      0 0 28px -12px rgba(71, 220, 160, 0.2);
+  }
+}
+
 .glass-subcard {
+  contain: layout style;
   background: linear-gradient(
     160deg,
-    rgba(16, 26, 46, 0.56) 0%,
-    rgba(10, 17, 31, 0.6) 100%
+    rgba(19, 31, 55, 0.85) 0%,
+    rgba(11, 18, 33, 0.9) 100%
   );
-  backdrop-filter: blur(14px) saturate(140%);
-  -webkit-backdrop-filter: blur(14px) saturate(140%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   transition:
-    border-color 160ms cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 160ms cubic-bezier(0.16, 1, 0.3, 1),
-    background-color 160ms cubic-bezier(0.16, 1, 0.3, 1);
+    border-color 150ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 150ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .glass-subcard:hover {
-    border-color: rgba(141, 240, 192, 0.2);
+    border-color: rgba(141, 240, 192, 0.22);
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.11),
-      0 0 18px -8px rgba(71, 220, 160, 0.15);
+      inset 0 1px 0 rgba(255, 255, 255, 0.12),
+      0 0 16px -8px rgba(71, 220, 160, 0.15);
   }
+}
+
+/* Skips layout & paint on offscreen rows in long lists & chats */
+.perf-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 96px;
+}
+
+@keyframes eqScale {
+  0%, 100% {
+    transform: scaleY(0.32);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+.eq-bar {
+  transform-origin: bottom center;
+  animation: eqScale 0.78s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes splashProgressFill {
+  0% {
+    transform: scaleX(0);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+.splash-progress-fill {
+  transform-origin: left center;
+  animation: splashProgressFill 6000ms linear forwards;
+}
+
+@keyframes splashSheenSweep {
+  0% {
+    transform: translateX(-140%) skewX(-18deg);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.7;
+  }
+  55% {
+    transform: translateX(220%) skewX(-18deg);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(220%) skewX(-18deg);
+    opacity: 0;
+  }
+}
+
+.splash-sheen {
+  animation: splashSheenSweep 3000ms cubic-bezier(0.22, 1, 0.36, 1) infinite;
 }
 
 .glass-input {
@@ -163,56 +266,16 @@ h1, h2, h3, h4, .font-display {
   );
   backdrop-filter: blur(32px) saturate(180%);
   -webkit-backdrop-filter: blur(32px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
     0 28px 70px -16px rgba(0, 0, 0, 0.86);
 }
 
 .glass-bar {
   background: rgba(9, 15, 28, 0.84);
-  backdrop-filter: blur(24px) saturate(175%);
-  -webkit-backdrop-filter: blur(24px) saturate(175%);
-}
-
-@keyframes splashFill {
-  0% {
-    transform: scaleX(0);
-  }
-  100% {
-    transform: scaleX(1);
-  }
-}
-
-@keyframes orbitalSpinSlow {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes orbitalSpinReverse {
-  from {
-    transform: rotate(360deg);
-  }
-  to {
-    transform: rotate(0deg);
-  }
-}
-
-.animate-splash-bar {
-  transform-origin: left center;
-  animation: splashFill 4.85s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-}
-
-.animate-orbit-slow {
-  animation: orbitalSpinSlow 7s linear infinite;
-}
-
-.animate-orbit-reverse {
-  animation: orbitalSpinReverse 5s linear infinite;
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
 }
 
 /* Safe area helpers for mobile Android/iOS PWAs */

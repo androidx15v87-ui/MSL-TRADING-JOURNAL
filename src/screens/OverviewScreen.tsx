@@ -121,7 +121,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
   return (
     <div className="space-y-6">
       {/* Hero / Welcome Banner */}
-      <section className="relative overflow-hidden rounded-2xl glass-card p-5 sm:p-7">
+      <section className="relative overflow-hidden rounded-2xl liquid-glass p-5 sm:p-7">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
           <div className="lg:col-span-7 space-y-4">
             <p className="text-xs font-semibold text-[#8df0c0]">
@@ -223,8 +223,8 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
 
       {/* 4 Core KPI Stat Cards */}
       <section aria-label="Performance metrics" className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
-        <article className="rounded-2xl glass-card p-4 sm:p-5">
-          <p className="text-xs font-medium text-[#8b9ab0]">Net performance</p>
+        <article className="rounded-2xl liquid-glass p-4 sm:p-5">
+          <p className="text-xs font-medium text-[#8b9ab0]">Total PnL</p>
           <p
             className={`mt-2 font-mono text-2xl sm:text-3xl font-bold tabular-nums tracking-tight ${
               stats.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
@@ -233,7 +233,8 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
             {formatR(stats.netR)}
           </p>
           <p className="mt-1.5 text-xs text-[#7989a1] tabular-nums">
-            {stats.totalTrades} {stats.totalTrades === 1 ? 'trade' : 'trades'} · DD -{stats.maxDrawdownR.toFixed(1)}R
+            <span className="text-[#47dca0]">+{stats.grossWin.toFixed(1)}R</span> profit ·{' '}
+            <span className="text-[#ff7d91]">-{stats.grossLoss.toFixed(1)}R</span> loss
           </p>
         </article>
 
@@ -361,7 +362,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
                   );
                 }}
               />
-              <Bar dataKey="netR" radius={[6, 6, 0, 0]} maxBarSize={42}>
+              <Bar dataKey="netR" radius={[6, 6, 0, 0]} maxBarSize={42} animationDuration={240}>
                 {monthlyPnL.map((entry) => (
                   <Cell
                     key={entry.monthKey}
@@ -381,6 +382,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
                 dataKey="cumulativeR"
                 stroke="#8ebeff"
                 strokeWidth={2}
+                animationDuration={240}
                 dot={{ r: 3, fill: '#8ebeff', strokeWidth: 0 }}
                 activeDot={{ r: 5, fill: '#eef3fb' }}
               />

@@ -12,7 +12,7 @@ interface ModelsScreenProps {
   onDeleteField: (id: string) => Promise<void> | void;
 }
 
-export const ModelsScreen: React.FC<ModelsScreenProps> = ({
+export const ModelsScreen: React.FC<ModelsScreenProps> = React.memo(({
   models,
   fields,
   onSaveModel,
@@ -109,7 +109,7 @@ export const ModelsScreen: React.FC<ModelsScreenProps> = ({
     <div className="space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+          <p className="text-xs font-medium text-[#8df0c0]">
             Your rules, your way
           </p>
           <h2 className="mt-0.5 font-display text-2xl font-extrabold text-[#eef3fb]">
@@ -134,7 +134,7 @@ export const ModelsScreen: React.FC<ModelsScreenProps> = ({
         <article className="rounded-2xl glass-card p-5 space-y-4">
           <div className="flex items-center justify-between gap-3 pb-3 border-b border-white/[0.08]">
             <div>
-              <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+              <p className="text-xs font-medium text-[#8df0c0]">
                 Execution frameworks
               </p>
               <h3 className="text-base font-bold text-[#eef3fb]">My models</h3>
@@ -209,7 +209,7 @@ export const ModelsScreen: React.FC<ModelsScreenProps> = ({
         <article className="rounded-2xl glass-card p-5 space-y-4">
           <div className="flex items-center justify-between gap-3 pb-3 border-b border-white/[0.08]">
             <div>
-              <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+              <p className="text-xs font-medium text-[#8df0c0]">
                 Journal builder
               </p>
               <h3 className="text-base font-bold text-[#eef3fb]">Custom properties</h3>
@@ -294,7 +294,7 @@ export const ModelsScreen: React.FC<ModelsScreenProps> = ({
           >
             <div className="flex items-center justify-between pb-4 border-b border-white/[0.08]">
               <div>
-                <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+                <p className="text-xs font-medium text-[#8df0c0]">
                   Model builder
                 </p>
                 <h3 className="text-lg font-bold text-[#eef3fb]">
@@ -395,7 +395,7 @@ export const ModelsScreen: React.FC<ModelsScreenProps> = ({
           >
             <div className="flex items-center justify-between pb-4 border-b border-white/[0.08]">
               <div>
-                <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+                <p className="text-xs font-medium text-[#8df0c0]">
                   Property designer
                 </p>
                 <h3 className="text-lg font-bold text-[#eef3fb]">
@@ -497,4 +497,6 @@ export const ModelsScreen: React.FC<ModelsScreenProps> = ({
       )}
     </div>
   );
-};
+});
+
+ModelsScreen.displayName = 'ModelsScreen';

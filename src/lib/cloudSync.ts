@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { DEFAULT_ALARMS, DEFAULT_FIELDS, DEFAULT_PLAYBOOK } from '../data/quotes';
 import type {
+  AIMemoryItem,
   CustomField,
   CustomFieldValue,
   JournalSettings,
@@ -223,6 +224,23 @@ function sanitizeAlarmPayload(uid: string, alarm: SessionAlarm, index: number) {
     time,
     enabled: Boolean(alarm.enabled),
     sortOrder: clampNumber(index, 0, 20, index),
+  };
+}
+
+function sanitizeAIMemoryPayload(uid: string, memory: AIMemoryItem) {
+  const id = sanitizeId(memory.id);
+  const category = (['preference', 'rule', 'goal', 'context'].includes(memory.category)
+    ? memory.category
+    : 'context') as AIMemoryItem['category'];
+  const content = (String(memory.content || '').trim() || 'Preference').slice(
+    0,
+    VALIDATION_LIMITS.memoryContentMaxLength
+  );
+  return {
+    id,
+    userId: uid,
+    content,
+    category,
   };
 }
 
@@ -995,4 +1013,81 @@ export function subscribeToCloudJournal(
       unsub();
     }
   };
+}
+
+export async function cloudSaveAIMemory(uid: string, memory: AIMemoryItem): Promise<void> {
+  const payload = sanitizeAIMemoryPayload(uid, memory);
+  const path = `users/${uid}/aiMemories/${payload.id}`;
+  const ref = doc(db, 'users', uid, 'aiMemories', payload.id);
+
+  let exists = false;
+  try {
+    exists = (await getDoc(ref)).exists();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+  }
+
+  try {
+    if (exists) {
+      await updateDoc(ref, {
+        content: payload.content,
+        category: payload.category,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(ref, {
+        ...payload,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, exists ? OperationType.UPDATE : OperationType.CREATE, path);
+  }
+}
+
+export async function cloudDeleteAIMemory(uid: string, memoryId: string): Promise<void> {
+  const cleanId = sanitizeId(memoryId);
+  const path = `users/${uid}/aiMemories/${cleanId}`;
+  try {
+    await deleteDoc(doc(db, 'users', uid, 'aiMemories', cleanId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export function subscribeToCloudMemories(
+  uid: string,
+  onMemories: (memories: AIMemoryItem[]) => void,
+  onError?: (err: unknown) => void
+): Unsubscribe {
+  return onSnapshot(
+    query(collection(db, 'users', uid, 'aiMemories'), where('userId', '==', uid)),
+    (snap) => {
+      const items: AIMemoryItem[] = snap.docs
+        .map((docSnap) => {
+          const d = docSnap.data();
+          const cat = (['preference', 'rule', 'goal', 'context'].includes(String(d.category))
+            ? String(d.category)
+            : 'context') as AIMemoryItem['category'];
+          return {
+            id: String(d.id || docSnap.id),
+            content: String(d.content || '').trim(),
+            category: cat,
+            createdAt: timestampToIso(d.createdAt),
+            updatedAt: timestampToIso(d.updatedAt),
+          };
+        })
+        .filter((m) => m.content.length > 0)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      onMemories(items);
+    },
+    (err) => {
+      try {
+        handleFirestoreError(err, OperationType.GET, `users/${uid}/aiMemories`);
+      } catch (wrapped) {
+        onError?.(wrapped);
+      }
+    }
+  );
 }

@@ -11,7 +11,7 @@ interface CalendarScreenProps {
 
 const WEEKDAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
-export const CalendarScreen: React.FC<CalendarScreenProps> = ({
+export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
   trades,
   onLogTradeForDate,
   onSelectTrade,
@@ -88,7 +88,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
     <div className="space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+          <p className="text-xs font-medium text-[#8df0c0]">
             Consistency tracker
           </p>
           <h2 className="mt-0.5 font-display text-2xl font-extrabold text-[#eef3fb]">
@@ -245,7 +245,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
         {/* Selected Day Review Panel */}
         <article className="lg:col-span-5 xl:col-span-4 rounded-2xl glass-card p-5 flex flex-col justify-between">
           <div>
-            <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+            <p className="text-xs font-medium text-[#8df0c0]">
               Day review
             </p>
             <h3 className="mt-1 font-display text-lg font-bold text-[#eef3fb]">
@@ -314,4 +314,6 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
       </div>
     </div>
   );
-};
+});
+
+CalendarScreen.displayName = 'CalendarScreen';
