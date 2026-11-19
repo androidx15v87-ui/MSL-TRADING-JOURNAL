@@ -96,6 +96,7 @@ export interface JournalState {
   models: TradingModel[];
   fields: CustomField[];
   playbook: Playbook;
+  playbookChecks?: Record<string, boolean>;
   alarms: SessionAlarm[];
   profile: UserProfile;
   settings: JournalSettings;

@@ -15,7 +15,14 @@ import { OfflineBanner } from './components/OfflineBanner';
 import { TradeDetailModal } from './components/TradeDetailModal';
 import { TradeModal } from './components/TradeModal';
 import { useFirebase } from './context/FirebaseContext';
-import { isAppLockEnabled, saveLockAccountName } from './lib/appLock';
+import {
+  getAutoLockRemainingMs,
+  getAutoLockTimeoutMinutes,
+  hasAppPin,
+  isAppLockEnabled,
+  recordUserActivity,
+  saveLockAccountName,
+} from './lib/appLock';
 import { createDefaultState, QUOTES, type QuoteItem } from './data/quotes';
 import {
   formatR,
@@ -53,12 +60,18 @@ import {
   clearAllJournalData,
   deleteTradeRecord,
   loadJournalState,
+  loadPlaybookChecks,
   saveFullJournalState,
   saveKV,
+  savePlaybookChecks,
   saveTradeRecord,
 } from './lib/db';
 import { formatCloudErrorMessage } from './lib/firebase';
-import { evaluateAlarmsAndQuotes, syncNativeAlarms } from './lib/notifications';
+import {
+  evaluateAlarmsAndQuotes,
+  silenceActiveNotifications,
+  syncNativeAlarms,
+} from './lib/notifications';
 import { OverviewScreen } from './screens/OverviewScreen';
 import type {
   AIAppAction,
@@ -204,7 +217,9 @@ export default function App() {
     signOutAccount,
   } = useFirebase();
 
+  const [snoozedAlarmLabel, setSnoozedAlarmLabel] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const toastIsAlertRef = useRef<boolean>(false);
   const lastAlarmKeyRef = useRef<string>('');
   const splashStartRef = useRef<number>(Date.now());
   const stateRef = useRef<JournalState>(state);
@@ -214,11 +229,23 @@ export default function App() {
   const userRef = useRef(user);
   userRef.current = user;
   const mergedForSessionRef = useRef<string | null>(null);
+  const previousPageRef = useRef<PageId>('dashboard');
 
-  const showToast = useCallback((msg: string) => {
+  const handleNavigate = useCallback((nextPage: PageId) => {
+    setActivePage((current) => {
+      if (nextPage === 'ai' && current !== 'ai') {
+        previousPageRef.current = current;
+      }
+      return nextPage;
+    });
+  }, []);
+
+  const showToast = useCallback((msg: string, isAlert = false) => {
+    toastIsAlertRef.current = isAlert;
     setToastMessage(msg);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     toastTimerRef.current = window.setTimeout(() => {
+      toastIsAlertRef.current = false;
       setToastMessage(null);
     }, 3200);
   }, []);
@@ -282,6 +309,9 @@ export default function App() {
       mergedForSessionRef.current = null;
       setCloudStatus('local');
       setCloudError(null);
+      void loadPlaybookChecks(null).then((localChecks) => {
+        setState((prev) => ({ ...prev, playbookChecks: localChecks }));
+      });
       return;
     }
 
@@ -290,6 +320,11 @@ export default function App() {
     let unsubMemories: (() => void) | null = null;
     let pushedLocalMemories = false;
     const preSyncSnapshot = stateRef.current;
+
+    void loadPlaybookChecks(user.uid).then((userChecks) => {
+      if (cancelled) return;
+      setState((prev) => ({ ...prev, playbookChecks: userChecks }));
+    });
 
     const initCloud = async () => {
       setCloudStatus('connecting');
@@ -347,11 +382,17 @@ export default function App() {
               }
             }
 
-            setState(cloudState);
-            syncNativeAlarms(cloudState.alarms);
+            const scopedChecks = await loadPlaybookChecks(user.uid);
+            if (cancelled) return;
+            const mergedState: JournalState = {
+              ...cloudState,
+              playbookChecks: scopedChecks,
+            };
+            setState(mergedState);
+            syncNativeAlarms(mergedState.alarms);
             setCloudStatus('synced');
             setCloudError(null);
-            void saveFullJournalState(cloudState).catch(() => {});
+            void saveFullJournalState(mergedState, user.uid).catch(() => {});
           },
           (err) => {
             if (cancelled) return;
@@ -400,12 +441,14 @@ export default function App() {
     };
   }, [hydrated, authReady, user, setCloudStatus, setCloudError, showToast]);
 
-  // Two-part 6-second Liquid-Glass opening animation (0–3s Brand Reveal -> 3–6s Execution Mantra)
+  // Two-part 6.0-second Obsidian Vault opening animation (0-3.0s Emblem -> 3.0-6.0s Market Curve & Conviction, no version label)
   useEffect(() => {
-    const phaseTimer = window.setTimeout(() => {
+    const t2 = window.setTimeout(() => {
       setSplashPhase(2);
     }, 3000);
-    return () => window.clearTimeout(phaseTimer);
+    return () => {
+      window.clearTimeout(t2);
+    };
   }, []);
 
   useEffect(() => {
@@ -413,12 +456,74 @@ export default function App() {
     const elapsed = Date.now() - splashStartRef.current;
     const remaining = Math.max(0, 6000 - elapsed);
     const timer = window.setTimeout(() => {
+      recordUserActivity(true);
       setShowSplash(false);
     }, remaining);
     return () => window.clearTimeout(timer);
   }, [hydrated]);
 
-  // Background session alarms & quote reminder ticker
+  // Live user inactivity & background tab auto-lock based on configured Auto-Lock timeout
+  useEffect(() => {
+    if (showSplash || isLocked) return;
+
+    const onActivity = () => {
+      recordUserActivity();
+    };
+
+    const checkInactivityLock = () => {
+      if (!isAppLockEnabled() || !hasAppPin()) return;
+      const timeoutMins = getAutoLockTimeoutMinutes();
+      if (timeoutMins > 0 && getAutoLockRemainingMs() <= 0) {
+        setIsLocked(true);
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (!document.hidden) {
+        checkInactivityLock();
+      }
+    };
+
+    const activityEvents: Array<keyof WindowEventMap> = [
+      'pointerdown',
+      'keydown',
+      'touchstart',
+      'wheel',
+      'scroll',
+    ];
+    for (const evt of activityEvents) {
+      window.addEventListener(evt, onActivity, { passive: true });
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    const interval = window.setInterval(checkInactivityLock, 1000);
+
+    return () => {
+      for (const evt of activityEvents) {
+        window.removeEventListener(evt, onActivity);
+      }
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.clearInterval(interval);
+    };
+  }, [isLocked, showSplash]);
+
+  // Silence active alert notifications & toasts immediately while logging a trade
+  useEffect(() => {
+    if (tradeModalOpen) {
+      void silenceActiveNotifications();
+      if (toastIsAlertRef.current) {
+        toastIsAlertRef.current = false;
+        setToastMessage(null);
+        if (toastTimerRef.current) {
+          window.clearTimeout(toastTimerRef.current);
+          toastTimerRef.current = null;
+        }
+      }
+    } else {
+      setSnoozedAlarmLabel(null);
+    }
+  }, [tradeModalOpen]);
+
+  // Background session alarms & quote reminder ticker (auto-snoozes during trade logging)
   useEffect(() => {
     if (!hydrated) return;
 
@@ -426,13 +531,17 @@ export default function App() {
       const res = await evaluateAlarmsAndQuotes(
         state.alarms,
         state.settings,
-        lastAlarmKeyRef.current
+        lastAlarmKeyRef.current,
+        { isLoggingTrade: tradeModalOpen }
       );
       if (res.triggeredKey) {
         lastAlarmKeyRef.current = res.triggeredKey;
       }
+      if (res.snoozedAlarmName) {
+        setSnoozedAlarmLabel(res.snoozedAlarmName);
+      }
       if (res.toastMessage) {
-        showToast(res.toastMessage);
+        showToast(res.toastMessage, true);
       }
       if (res.quote) {
         setQuote(res.quote);
@@ -453,7 +562,7 @@ export default function App() {
       window.removeEventListener('focus', onFocusOrVisible);
       document.removeEventListener('visibilitychange', onFocusOrVisible);
     };
-  }, [hydrated, state.alarms, state.settings, showToast]);
+  }, [hydrated, state.alarms, state.settings, showToast, tradeModalOpen]);
 
   const handleOpenNewTrade = useCallback((dateIso?: string) => {
     setEditingTrade(null);
@@ -610,6 +719,14 @@ export default function App() {
     }
   };
 
+  const handleSavePlaybookChecks = useCallback((nextChecks: Record<string, boolean>) => {
+    setState((prev) => ({
+      ...prev,
+      playbookChecks: nextChecks,
+    }));
+    void savePlaybookChecks(nextChecks, userRef.current?.uid);
+  }, []);
+
   const handleSaveAlarmsAndSettings = async (
     alarms: SessionAlarm[],
     settings: JournalSettings
@@ -647,7 +764,7 @@ export default function App() {
     setQuote((prev) => randomQuote(prev));
   }, []);
 
-  // Execute MSL AI App Control Actions (syncs to state, IndexedDB, and Cloud Firestore)
+  // Execute KAIROS App Control Actions (syncs to state, IndexedDB, and Cloud Firestore)
   const handleExecuteAIActions = useCallback(
     async (actions: AIAppAction[]): Promise<AIAppActionResult[]> => {
       const results: AIAppActionResult[] = [];
@@ -658,7 +775,7 @@ export default function App() {
           if (action.name === 'navigate_app') {
             const target = String(action.args?.page || 'dashboard').toLowerCase() as PageId;
             if (VALID_PAGES.has(target)) {
-              setActivePage(target);
+              handleNavigate(target);
               results.push({
                 name: action.name,
                 label: `Opened ${target}`,
@@ -717,7 +834,7 @@ export default function App() {
             }
             const label = `Logged ${newTrade.pair} ${newTrade.direction} (${formatR(newTrade.r)})`;
             results.push({ name: action.name, label, ok: true });
-            showToast(`MSL AI: ${label}`);
+            showToast(`KAIROS: ${label}`);
           } else if (action.name === 'update_trade') {
             const targetId = String(action.args.tradeId || '').trim();
             const existing = stateRef.current.trades.find((t) => t.id === targetId);
@@ -767,7 +884,7 @@ export default function App() {
             }
             const label = `Updated ${updated.pair} (${formatR(updated.r)})`;
             results.push({ name: action.name, label, ok: true });
-            showToast(`MSL AI: ${label}`);
+            showToast(`KAIROS: ${label}`);
           } else if (action.name === 'delete_trade') {
             const targetId = String(action.args.tradeId || '').trim();
             const existing = stateRef.current.trades.find((t) => t.id === targetId);
@@ -789,7 +906,7 @@ export default function App() {
             }
             const label = `Deleted ${existing.pair} (${formatR(existing.r)})`;
             results.push({ name: action.name, label, ok: true });
-            showToast(`MSL AI: ${label}`);
+            showToast(`KAIROS: ${label}`);
           } else if (action.name === 'create_trading_model') {
             const newModel: TradingModel = {
               id: generateId(),
@@ -809,7 +926,7 @@ export default function App() {
               label: `Saved model "${newModel.name}"`,
               ok: true,
             });
-            showToast(`MSL AI: Saved model "${newModel.name}"`);
+            showToast(`KAIROS: Saved model "${newModel.name}"`);
           } else if (action.name === 'update_playbook') {
             const currentPb = stateRef.current.playbook;
             const nextPlaybook: Playbook = {
@@ -833,7 +950,7 @@ export default function App() {
               label: 'Updated Playbook',
               ok: true,
             });
-            showToast('MSL AI: Playbook updated.');
+            showToast('KAIROS: Playbook updated.');
           } else if (action.name === 'update_session_alarm') {
             const alarmName = String(action.args.name || '').trim();
             const currentAlarms = stateRef.current.alarms;
@@ -881,7 +998,7 @@ export default function App() {
               label: `Alarm "${alarmName}" updated`,
               ok: true,
             });
-            showToast(`MSL AI: Alarm "${alarmName}" updated.`);
+            showToast(`KAIROS: Alarm "${alarmName}" updated.`);
           } else if (action.name === 'cycle_motivational_quote') {
             handleCycleQuote();
             results.push({
@@ -938,7 +1055,7 @@ export default function App() {
 
       return results;
     },
-    [handleCycleQuote, handleOpenNewTrade, showToast]
+    [handleCycleQuote, handleNavigate, handleOpenNewTrade, showToast]
   );
 
   const handleAddMemoryManual = useCallback(
@@ -1023,7 +1140,7 @@ export default function App() {
   };
 
   const handleRestoreBackup = async (restored: JournalState) => {
-    await saveFullJournalState(restored);
+    await saveFullJournalState(restored, user?.uid);
     setState(restored);
     syncNativeAlarms(restored.alarms);
 
@@ -1040,7 +1157,7 @@ export default function App() {
   };
 
   const handleClearAllData = async () => {
-    const fresh = await clearAllJournalData();
+    const fresh = await clearAllJournalData(user?.uid);
     setState(fresh);
     syncNativeAlarms(fresh.alarms);
 
@@ -1093,54 +1210,63 @@ export default function App() {
 
   return (
     <>
-      {/* Refined 2-Part 6-Second Liquid-Glass Entry Animation (Auto-Completes at 6.0s) */}
+      {/* Two-Part 6-Second Liquid-Glass Entry Animation (Zero App Version Shown) */}
       <AnimatePresence>
         {showSplash && (
           <motion.div
             initial={{ opacity: 1 }}
             exit={{ opacity: 0, scale: 1.02 }}
             transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-[#080d18]/98 backdrop-blur-2xl px-6 select-none overflow-hidden"
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-[#060a14] backdrop-blur-2xl px-6 select-none overflow-hidden"
           >
-            {/* Ambient Dual-Tone Radial Depth */}
+            {/* Ambient Dual-Tone Breathing Aurora */}
             <motion.div
-              initial={{ opacity: 0.25, scale: 0.9 }}
-              animate={{ opacity: [0.25, 0.48, 0.3], scale: [0.9, 1.06, 1] }}
+              initial={{ opacity: 0.2, scale: 0.85 }}
+              animate={{ opacity: [0.22, 0.55, 0.35], scale: [0.85, 1.12, 1.02] }}
               transition={{ duration: 6, ease: 'easeInOut' }}
-              className="pointer-events-none absolute h-80 w-80 rounded-full bg-[radial-gradient(circle,rgba(71,220,160,0.16)_0%,rgba(142,190,255,0.08)_50%,transparent_75%)] blur-2xl"
+              className="pointer-events-none absolute h-[420px] w-[420px] rounded-full bg-[radial-gradient(circle,rgba(71,220,160,0.22)_0%,rgba(142,190,255,0.1)_48%,transparent_74%)] blur-3xl"
+            />
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute h-[310px] w-[310px] rounded-full border border-[#47dca0]/[0.1] splash-orbit"
+            />
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute h-[380px] w-[380px] rounded-full border border-dashed border-[#8ebeff]/[0.08] splash-orbit-reverse"
             />
 
             <motion.div
-              initial={{ opacity: 0, scale: 0.92, y: 16 }}
+              initial={{ opacity: 0, scale: 0.92, y: 18 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               transition={{ duration: 0.65, ease: [0.16, 1, 0.3, 1] }}
-              className="relative liquid-glass rounded-3xl px-8 py-10 w-full max-w-[324px] text-center overflow-hidden"
+              className="relative liquid-glass rounded-3xl px-8 py-10 w-full max-w-[348px] text-center overflow-hidden"
             >
               {/* Soft Specular Sheen Sweep */}
-              <div className="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-transparent via-white/[0.08] to-transparent splash-sheen" />
+              <div className="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-transparent via-white/[0.1] to-transparent splash-sheen" />
 
               <AnimatePresence mode="wait">
                 {splashPhase === 1 ? (
                   <motion.div
-                    key="splash-step-1"
+                    key="splash-part-1"
                     initial={{ opacity: 0, y: 12, scale: 0.94 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -14, scale: 0.95 }}
-                    transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+                    transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
                     className="flex flex-col items-center gap-4"
                   >
                     <div className="relative flex items-center justify-center">
+                      <div className="absolute -inset-3 rounded-[26px] border border-[#47dca0]/30 splash-beacon" />
                       <motion.div
-                        initial={{ rotate: -24, scale: 0.82, opacity: 0 }}
+                        initial={{ rotate: -28, scale: 0.8, opacity: 0 }}
                         animate={{ rotate: 0, scale: 1, opacity: 1 }}
                         transition={{ duration: 0.85, ease: [0.16, 1, 0.3, 1] }}
-                        className="absolute -inset-2 rounded-[22px] border border-[#47dca0]/25"
+                        className="absolute -inset-1.5 rounded-[22px] border border-[#8ebeff]/30"
                       />
                       <motion.div
-                        initial={{ scale: 0.86, opacity: 0 }}
+                        initial={{ scale: 0.84, opacity: 0 }}
                         animate={{ scale: 1, opacity: 1 }}
-                        transition={{ duration: 0.6, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
-                        className="relative h-16 w-16 rounded-2xl border border-white/25 bg-gradient-to-br from-[#234b50]/90 to-[#0c1b2c]/95 flex items-center justify-center font-display text-xl font-extrabold tracking-tight text-[#8df0c0] shadow-[inset_0_1px_0_rgba(255,255,255,0.3)]"
+                        transition={{ duration: 0.55, delay: 0.08, ease: [0.16, 1, 0.3, 1] }}
+                        className="relative h-16 w-16 rounded-2xl border border-white/25 bg-gradient-to-br from-[#235458]/95 to-[#0a1829]/95 flex items-center justify-center font-display text-xl font-extrabold tracking-tight text-[#8df0c0] shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_12px_28px_-10px_rgba(71,220,160,0.45)]"
                       >
                         MSL
                       </motion.div>
@@ -1150,7 +1276,7 @@ export default function App() {
                       <motion.p
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.5, delay: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                        transition={{ duration: 0.45, delay: 0.18, ease: [0.16, 1, 0.3, 1] }}
                         className="font-display text-2xl font-extrabold tracking-tight text-[#eef3fb]"
                       >
                         MSL Journal
@@ -1158,77 +1284,102 @@ export default function App() {
                       <motion.div
                         initial={{ scaleX: 0, opacity: 0 }}
                         animate={{ scaleX: 1, opacity: 1 }}
-                        transition={{ duration: 0.65, delay: 0.38, ease: [0.16, 1, 0.3, 1] }}
-                        className="mx-auto h-px w-24 bg-gradient-to-r from-transparent via-[#47dca0]/70 to-transparent origin-center"
+                        transition={{ duration: 0.65, delay: 0.34, ease: [0.16, 1, 0.3, 1] }}
+                        className="mx-auto h-px w-28 bg-gradient-to-r from-transparent via-[#47dca0]/80 to-transparent origin-center"
                       />
                       <motion.p
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        transition={{ duration: 0.5, delay: 0.55 }}
-                        className="text-xs font-medium text-[#8b9ab0] tabular-nums"
+                        transition={{ duration: 0.45, delay: 0.48 }}
+                        className="text-xs font-medium text-[#9fb0c7]"
                       >
-                        Version 10.5.4
+                        Precision trade workspace
                       </motion.p>
                     </div>
                   </motion.div>
                 ) : (
                   <motion.div
-                    key="splash-step-2"
+                    key="splash-part-2"
                     initial={{ opacity: 0, y: 14, scale: 0.96 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, scale: 1.03 }}
-                    transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
-                    className="py-1.5 flex flex-col items-center gap-4"
+                    transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+                    className="py-1 flex flex-col items-center gap-4"
                   >
                     <svg
-                      viewBox="0 0 180 34"
-                      className="w-44 h-8 overflow-visible"
+                      viewBox="0 0 210 52"
+                      className="w-48 h-12 overflow-visible"
                       aria-hidden="true"
                     >
-                      <motion.path
-                        d="M 4 26 Q 42 26, 66 18 T 118 14 T 176 4"
-                        fill="none"
-                        stroke="url(#splashCurveGrad)"
-                        strokeWidth="2.4"
-                        strokeLinecap="round"
-                        initial={{ pathLength: 0, opacity: 0.25 }}
-                        animate={{ pathLength: 1, opacity: 1 }}
-                        transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
-                      />
-                      <motion.circle
-                        cx="176"
-                        cy="4"
-                        r="3.2"
-                        fill="#8df0c0"
-                        initial={{ scale: 0, opacity: 0 }}
-                        animate={{ scale: [0, 1.35, 1], opacity: 1 }}
-                        transition={{ duration: 0.45, delay: 0.95, ease: [0.16, 1, 0.3, 1] }}
-                      />
                       <defs>
                         <linearGradient id="splashCurveGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                          <stop offset="0%" stopColor="#8ebeff" stopOpacity="0.4" />
+                          <stop offset="0%" stopColor="#8ebeff" stopOpacity="0.45" />
                           <stop offset="55%" stopColor="#47dca0" stopOpacity="0.95" />
                           <stop offset="100%" stopColor="#8df0c0" stopOpacity="1" />
                         </linearGradient>
+                        <linearGradient id="splashAreaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                          <stop offset="0%" stopColor="#47dca0" stopOpacity="0.26" />
+                          <stop offset="100%" stopColor="#47dca0" stopOpacity="0" />
+                        </linearGradient>
                       </defs>
+
+                      <line x1="0" y1="38" x2="210" y2="38" stroke="rgba(255,255,255,0.08)" strokeDasharray="3 4" strokeWidth="1" />
+                      <line x1="0" y1="20" x2="210" y2="20" stroke="rgba(142,190,255,0.12)" strokeDasharray="3 4" strokeWidth="1" />
+
+                      <motion.path
+                        d="M 6 42 Q 36 44, 54 32 T 106 28 T 156 16 T 204 6 L 204 48 L 6 48 Z"
+                        fill="url(#splashAreaGrad)"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.9, delay: 0.2 }}
+                      />
+                      <motion.path
+                        d="M 6 42 Q 36 44, 54 32 T 106 28 T 156 16 T 204 6"
+                        fill="none"
+                        stroke="url(#splashCurveGrad)"
+                        strokeWidth="2.6"
+                        strokeLinecap="round"
+                        initial={{ pathLength: 0, opacity: 0.3 }}
+                        animate={{ pathLength: 1, opacity: 1 }}
+                        transition={{ duration: 1.4, ease: [0.16, 1, 0.3, 1] }}
+                      />
+                      <motion.circle
+                        cx="106"
+                        cy="28"
+                        r="3"
+                        fill="#8ebeff"
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 0.9 }}
+                        transition={{ duration: 0.35, delay: 0.65 }}
+                      />
+                      <motion.circle
+                        cx="204"
+                        cy="6"
+                        r="4"
+                        fill="#8df0c0"
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{ scale: [0, 1.45, 1], opacity: 1 }}
+                        transition={{ duration: 0.45, delay: 1.2, ease: [0.16, 1, 0.3, 1] }}
+                      />
                     </svg>
 
-                    <div className="space-y-1">
+                    <div className="space-y-1.5">
                       <motion.p
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.45, delay: 0.12, ease: [0.16, 1, 0.3, 1] }}
-                        className="font-display text-xl font-extrabold tracking-tight text-[#eef3fb] leading-snug"
+                        transition={{ duration: 0.4, delay: 0.14, ease: [0.16, 1, 0.3, 1] }}
+                        className="font-display text-lg font-extrabold tracking-tight text-[#eef3fb]"
                       >
-                        Read the market.
+                        Read the market.{' '}
+                        <span className="text-[#47dca0]">Respect the plan.</span>
                       </motion.p>
                       <motion.p
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.45, delay: 0.36, ease: [0.16, 1, 0.3, 1] }}
-                        className="font-display text-xl font-extrabold tracking-tight text-[#47dca0] leading-snug"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.4, delay: 0.38 }}
+                        className="text-xs text-[#9fb0c7]"
                       >
-                        Respect the plan.
+                        Structure · Patience · Edge
                       </motion.p>
                     </div>
                   </motion.div>
@@ -1250,7 +1401,10 @@ export default function App() {
           <AppLockScreen
             accountName={accountDisplayName}
             accountLoaded={hydrated}
-            onUnlock={() => setIsLocked(false)}
+            onUnlock={() => {
+              recordUserActivity(true);
+              setIsLocked(false);
+            }}
           />
         )}
       </AnimatePresence>
@@ -1262,7 +1416,7 @@ export default function App() {
       >
         <Layout
           activePage={activePage}
-          onNavigate={setActivePage}
+          onNavigate={handleNavigate}
           onOpenTradeModal={() => handleOpenNewTrade()}
           onCycleQuote={handleCycleQuote}
           onSignIn={handleSignIn}
@@ -1286,6 +1440,8 @@ export default function App() {
                   <AIScreen
                     journalState={state}
                     memories={memories}
+                    isActive={activePage === 'ai'}
+                    onBack={() => setActivePage(previousPageRef.current || 'dashboard')}
                     onAddMemory={handleAddMemoryManual}
                     onDeleteMemory={handleDeleteMemoryManual}
                     onExecuteAIActions={handleExecuteAIActions}
@@ -1308,7 +1464,7 @@ export default function App() {
                       onNextQuote={handleCycleQuote}
                       onCopyQuote={handleCopyQuote}
                       onOpenLogTrade={() => handleOpenNewTrade()}
-                      onNavigate={setActivePage}
+                      onNavigate={handleNavigate}
                       onSelectTrade={(t) => setViewingTrade(t)}
                     />
                   )}
@@ -1352,7 +1508,13 @@ export default function App() {
                   {activePage === 'playbook' && (
                     <PlaybookScreen
                       playbook={state.playbook}
+                      checks={state.playbookChecks || {}}
+                      models={state.models}
                       onSavePlaybook={handleSavePlaybook}
+                      onSaveChecks={handleSavePlaybookChecks}
+                      onSaveModel={handleSaveModel}
+                      onDeleteModel={handleDeleteModel}
+                      onNavigate={setActivePage}
                     />
                   )}
 
@@ -1390,6 +1552,8 @@ export default function App() {
         models={state.models}
         fields={state.fields}
         existingTags={existingTags}
+        hasActiveAlarms={state.alarms.some((a) => a.enabled)}
+        snoozedAlarmName={snoozedAlarmLabel}
         onClose={() => {
           setTradeModalOpen(false);
           setEditingTrade(null);

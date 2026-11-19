@@ -25,6 +25,8 @@ interface TradeModalProps {
   models: TradingModel[];
   fields: CustomField[];
   existingTags?: string[];
+  hasActiveAlarms?: boolean;
+  snoozedAlarmName?: string | null;
   onClose: () => void;
   onSave: (trade: Trade) => Promise<void> | void;
   onNotifyError: (msg: string) => void;
@@ -62,6 +64,8 @@ export const TradeModal: React.FC<TradeModalProps> = ({
   models,
   fields,
   existingTags = [],
+  hasActiveAlarms = false,
+  snoozedAlarmName = null,
   onClose,
   onSave,
   onNotifyError,
@@ -134,8 +138,11 @@ export const TradeModal: React.FC<TradeModalProps> = ({
     interimText,
     isListening,
     isTranscribing,
+    elapsedSeconds,
+    audioBands,
     toggleField,
     stop: stopDictation,
+    cancel: cancelDictation,
   } = useVoiceDictation({
     onFinalText: handleVoiceText,
     onError: onNotifyError,
@@ -395,12 +402,19 @@ export const TradeModal: React.FC<TradeModalProps> = ({
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.08] shrink-0">
           <div>
-            <p className="text-[11px] font-semibold tracking-wider text-[#8df0c0] uppercase">
+            <p className="text-xs font-semibold text-[#8df0c0]">
               Execution record
             </p>
             <h2 id="trade-modal-heading" className="text-lg font-bold text-[#eef3fb]">
               {trade ? 'Edit trade' : 'Log a trade'}
             </h2>
+            {(snoozedAlarmName || hasActiveAlarms) && (
+              <p className="mt-0.5 text-[11px] text-[#8b9ab0]">
+                {snoozedAlarmName
+                  ? `${snoozedAlarmName} auto-snoozed (+5m) · focus protected`
+                  : 'Session alerts silenced while logging'}
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -415,21 +429,45 @@ export const TradeModal: React.FC<TradeModalProps> = ({
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
           {activeField && (
             <div className="rounded-xl bg-[#47dca0]/10 border border-[#47dca0]/35 px-3.5 py-2.5 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[11px] font-bold tracking-wide text-[#8df0c0] uppercase">
-                  {isTranscribing ? 'Transcribing speech' : 'Listening — speak now'}
-                </p>
-                <p className="mt-0.5 text-xs text-[#dce6f5] truncate">
-                  {interimText || 'Speak clearly into your microphone…'}
-                </p>
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div aria-hidden="true" className="flex items-center gap-[2px] h-5 shrink-0">
+                  {audioBands.slice(0, 10).map((level, idx) => (
+                    <span
+                      key={idx}
+                      className="w-[2.5px] h-5 rounded-full bg-[#47dca0] origin-center transition-transform duration-75"
+                      style={{ transform: `scaleY(${Math.max(0.18, level)})` }}
+                    />
+                  ))}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-[#8df0c0] tabular-nums">
+                    {isTranscribing
+                      ? 'Transcribing speech…'
+                      : isListening
+                      ? `Recording ${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`
+                      : 'Preparing microphone…'}
+                  </p>
+                  <p className="mt-0.5 text-xs text-[#dce6f5] truncate">
+                    {interimText || 'Speak clearly into your microphone…'}
+                  </p>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={() => stopDictation(false)}
-                className="min-h-[34px] rounded-lg glass-subcard px-2.5 text-xs font-semibold text-[#eef3fb] shrink-0"
-              >
-                Done
-              </button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => cancelDictation()}
+                  className="min-h-[36px] rounded-lg px-2.5 text-xs font-medium text-[#9fb0c7] hover:text-[#eef3fb] transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => stopDictation(false)}
+                  className="min-h-[36px] rounded-lg bg-[#47dca0] px-3 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] transition"
+                >
+                  Done
+                </button>
+              </div>
             </div>
           )}
 

@@ -130,6 +130,17 @@ function normalizeTrade(raw: Partial<Trade> & { id?: string }): Trade {
   };
 }
 
+function sanitizeChecksMap(raw: unknown): Record<string, boolean> {
+  if (!raw || typeof raw !== 'object') return {};
+  const next: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (v === true && k.trim()) {
+      next[k] = true;
+    }
+  }
+  return next;
+}
+
 function normalizeState(raw: Partial<JournalState> | null | undefined): JournalState {
   const base = createDefaultState();
   if (!raw || typeof raw !== 'object') return base;
@@ -144,6 +155,7 @@ function normalizeState(raw: Partial<JournalState> | null | undefined): JournalS
       ...DEFAULT_PLAYBOOK,
       ...(raw.playbook || {}),
     },
+    playbookChecks: sanitizeChecksMap(raw.playbookChecks),
     alarms: Array.isArray(raw.alarms) && raw.alarms.length > 0
       ? raw.alarms.map((a, idx) => ({
           id: a.id || `alarm-${idx}`,
@@ -191,13 +203,15 @@ function tryMigrateFromLocalStorage(): JournalState | null {
   return null;
 }
 
-export async function loadJournalState(): Promise<JournalState> {
+export async function loadJournalState(uid?: string | null): Promise<JournalState> {
   const db = await openDB();
   const tx = db.transaction([STORE_KV, STORE_TRADES, STORE_IMAGES], 'readonly');
 
-  const kvAll = await idbReq<{ key: string; value: unknown }[]>(tx.objectStore(STORE_KV).getAll());
-  const rawTrades = await idbReq<Omit<Trade, 'images'>[]>(tx.objectStore(STORE_TRADES).getAll());
-  const rawImages = await idbReq<StoredImageRecord[]>(tx.objectStore(STORE_IMAGES).getAll());
+  const [kvAll, rawTrades, rawImages] = await Promise.all([
+    idbReq<{ key: string; value: unknown }[]>(tx.objectStore(STORE_KV).getAll()),
+    idbReq<Omit<Trade, 'images'>[]>(tx.objectStore(STORE_TRADES).getAll()),
+    idbReq<StoredImageRecord[]>(tx.objectStore(STORE_IMAGES).getAll()),
+  ]);
   await txDone(tx);
 
   const kvMap = new Map<string, unknown>(kvAll.map((item) => [item.key, item.value]));
@@ -206,11 +220,11 @@ export async function loadJournalState(): Promise<JournalState> {
   if (kvMap.size === 0 && rawTrades.length === 0) {
     const legacy = tryMigrateFromLocalStorage();
     if (legacy) {
-      await saveFullJournalState(legacy);
+      await saveFullJournalState(legacy, uid);
       return legacy;
     }
     const defaults = createDefaultState();
-    await saveFullJournalState(defaults);
+    await saveFullJournalState(defaults, uid);
     return defaults;
   }
 
@@ -233,11 +247,18 @@ export async function loadJournalState(): Promise<JournalState> {
     })
   );
 
+  const scopeKey = getPlaybookChecksKvKey(uid);
+  const storedChecks =
+    (kvMap.get(scopeKey) as Record<string, boolean> | undefined) ??
+    (kvMap.get(PLAYBOOK_CHECKS_KEY) as Record<string, boolean> | undefined) ??
+    readPlaybookChecksFromLocalStorage(uid);
+
   return normalizeState({
     trades,
     models: (kvMap.get('models') as TradingModel[]) || [],
     fields: (kvMap.get('fields') as CustomField[]) || DEFAULT_FIELDS,
     playbook: (kvMap.get('playbook') as Playbook) || DEFAULT_PLAYBOOK,
+    playbookChecks: storedChecks,
     alarms: (kvMap.get('alarms') as SessionAlarm[]) || DEFAULT_ALARMS,
     profile: (kvMap.get('profile') as UserProfile) || { name: '', market: '' },
     settings: (kvMap.get('settings') as JournalSettings) || {
@@ -255,6 +276,84 @@ export async function saveKV<K extends keyof Omit<JournalState, 'trades'>>(
   const tx = db.transaction(STORE_KV, 'readwrite');
   tx.objectStore(STORE_KV).put({ key, value });
   await txDone(tx);
+}
+
+const PLAYBOOK_CHECKS_KEY = 'playbookChecks';
+const PLAYBOOK_CHECKS_LS_KEY = 'msl_playbook_checks_v1';
+
+function getChecksUserScope(uid?: string | null): string {
+  const clean = typeof uid === 'string' ? uid.trim() : '';
+  return clean || 'local';
+}
+
+function getPlaybookChecksKvKey(uid?: string | null): string {
+  return `${PLAYBOOK_CHECKS_KEY}::${getChecksUserScope(uid)}`;
+}
+
+function getPlaybookChecksLsKey(uid?: string | null): string {
+  return `${PLAYBOOK_CHECKS_LS_KEY}_${getChecksUserScope(uid)}`;
+}
+
+function readPlaybookChecksFromLocalStorage(uid?: string | null): Record<string, boolean> {
+  try {
+    const scopedRaw = localStorage.getItem(getPlaybookChecksLsKey(uid));
+    if (scopedRaw) {
+      return sanitizeChecksMap(JSON.parse(scopedRaw));
+    }
+    const legacyRaw = localStorage.getItem(PLAYBOOK_CHECKS_LS_KEY);
+    if (legacyRaw) {
+      return sanitizeChecksMap(JSON.parse(legacyRaw));
+    }
+  } catch {
+    // Ignore storage error
+  }
+  return {};
+}
+
+export async function loadPlaybookChecks(
+  uid?: string | null
+): Promise<Record<string, boolean>> {
+  const kvKey = getPlaybookChecksKvKey(uid);
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_KV, 'readonly');
+    const store = tx.objectStore(STORE_KV);
+    const scopedRow = await idbReq<{ key: string; value: unknown } | undefined>(store.get(kvKey));
+    if (scopedRow && scopedRow.value && typeof scopedRow.value === 'object') {
+      await txDone(tx);
+      return sanitizeChecksMap(scopedRow.value);
+    }
+    const legacyRow = await idbReq<{ key: string; value: unknown } | undefined>(
+      store.get(PLAYBOOK_CHECKS_KEY)
+    );
+    await txDone(tx);
+    if (legacyRow && legacyRow.value && typeof legacyRow.value === 'object') {
+      return sanitizeChecksMap(legacyRow.value);
+    }
+  } catch {
+    // Fallback to localStorage
+  }
+  return readPlaybookChecksFromLocalStorage(uid);
+}
+
+export async function savePlaybookChecks(
+  checks: Record<string, boolean>,
+  uid?: string | null
+): Promise<void> {
+  const clean = sanitizeChecksMap(checks);
+  try {
+    localStorage.setItem(getPlaybookChecksLsKey(uid), JSON.stringify(clean));
+  } catch {
+    // Ignore storage quota errors
+  }
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_KV, 'readwrite');
+    tx.objectStore(STORE_KV).put({ key: getPlaybookChecksKvKey(uid), value: clean });
+    await txDone(tx);
+  } catch {
+    // Ignore IDB errors
+  }
 }
 
 export async function saveTradeRecord(trade: Trade): Promise<void> {
@@ -300,7 +399,10 @@ export async function deleteTradeRecord(tradeId: string): Promise<void> {
   await txDone(tx);
 }
 
-export async function saveFullJournalState(state: JournalState): Promise<void> {
+export async function saveFullJournalState(
+  state: JournalState,
+  uid?: string | null
+): Promise<void> {
   const db = await openDB();
   const tx = db.transaction([STORE_KV, STORE_TRADES, STORE_IMAGES], 'readwrite');
 
@@ -308,9 +410,19 @@ export async function saveFullJournalState(state: JournalState): Promise<void> {
   const tradeStore = tx.objectStore(STORE_TRADES);
   const imageStore = tx.objectStore(STORE_IMAGES);
 
+  // Preserve per-user playbookChecks entries when refreshing journal state
+  const existingKv = await idbReq<{ key: string; value: unknown }[]>(kvStore.getAll());
+  const preservedChecks = existingKv.filter((row) =>
+    String(row.key).startsWith(`${PLAYBOOK_CHECKS_KEY}::`)
+  );
+
   kvStore.clear();
   tradeStore.clear();
   imageStore.clear();
+
+  for (const row of preservedChecks) {
+    kvStore.put(row);
+  }
 
   kvStore.put({ key: 'models', value: state.models });
   kvStore.put({ key: 'fields', value: state.fields });
@@ -318,6 +430,16 @@ export async function saveFullJournalState(state: JournalState): Promise<void> {
   kvStore.put({ key: 'alarms', value: state.alarms });
   kvStore.put({ key: 'profile', value: state.profile });
   kvStore.put({ key: 'settings', value: state.settings });
+
+  if (state.playbookChecks !== undefined) {
+    const cleanChecks = sanitizeChecksMap(state.playbookChecks);
+    kvStore.put({ key: getPlaybookChecksKvKey(uid), value: cleanChecks });
+    try {
+      localStorage.setItem(getPlaybookChecksLsKey(uid), JSON.stringify(cleanChecks));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }
 
   for (const trade of state.trades) {
     const { images, imageData: _legacy, ...tradeMeta } = trade;
@@ -336,9 +458,9 @@ export async function saveFullJournalState(state: JournalState): Promise<void> {
   await txDone(tx);
 }
 
-export async function clearAllJournalData(): Promise<JournalState> {
+export async function clearAllJournalData(uid?: string | null): Promise<JournalState> {
   const fresh = createDefaultState();
-  await saveFullJournalState(fresh);
+  await saveFullJournalState(fresh, uid);
   try {
     localStorage.removeItem(LEGACY_KEY_V10);
     localStorage.removeItem(LEGACY_KEY_V91);

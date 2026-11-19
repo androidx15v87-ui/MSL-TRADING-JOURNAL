@@ -3,6 +3,8 @@ const PIN_LOCK_ENABLED_KEY = 'msl_app_pin_enabled_v1';
 const BIOMETRIC_CREDS_KEY = 'msl_app_biometrics_v1';
 const BIOMETRIC_AUTO_PROMPT_KEY = 'msl_app_biometrics_autoprompt_v1';
 const LOCK_ACCOUNT_NAME_KEY = 'msl_app_lock_account_name_v1';
+const LOCK_ATTEMPT_STATE_KEY = 'msl_app_lock_attempts_v1';
+const LOCK_TIMEOUT_MIN_KEY = 'msl_app_lock_timeout_min_v1';
 const PIN_SALT = 'msl-journal-android-vault-v1';
 
 export type BiometricModality = 'fingerprint' | 'faceId';
@@ -32,6 +34,24 @@ export interface EnrolledBiometricsState {
   hasAny: boolean;
 }
 
+export interface PinLockoutState {
+  failedAttempts: number;
+  lockedUntilMs: number;
+}
+
+// Module-level caches for 0ms App Lock mount latency
+let cachedBioSupport: BiometricSupportStatus | null = null;
+let bioSupportPromise: Promise<BiometricSupportStatus> | null = null;
+
+function hashPinSyncFallback(payload: string): string {
+  let h1 = 0x811c9dc5;
+  for (let i = 0; i < payload.length; i++) {
+    h1 ^= payload.charCodeAt(i);
+    h1 = Math.imul(h1, 0x01000193);
+  }
+  return `fnv-${(h1 >>> 0).toString(16)}`;
+}
+
 async function hashPin(pin: string): Promise<string> {
   const payload = `${PIN_SALT}:${pin}`;
   if (typeof window !== 'undefined' && window.crypto?.subtle) {
@@ -45,12 +65,7 @@ async function hashPin(pin: string): Promise<string> {
       // Fallback below if subtle crypto is unavailable in context
     }
   }
-  let h1 = 0x811c9dc5;
-  for (let i = 0; i < payload.length; i++) {
-    h1 ^= payload.charCodeAt(i);
-    h1 = Math.imul(h1, 0x01000193);
-  }
-  return `fnv-${(h1 >>> 0).toString(16)}`;
+  return hashPinSyncFallback(payload);
 }
 
 export function isValidPinFormat(pin: string): boolean {
@@ -70,6 +85,45 @@ export function isAppLockEnabled(): boolean {
 export function setAppLockEnabled(enabled: boolean): void {
   try {
     localStorage.setItem(PIN_LOCK_ENABLED_KEY, String(enabled));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function getAutoLockTimeoutMinutes(): number {
+  try {
+    const raw = localStorage.getItem(LOCK_TIMEOUT_MIN_KEY);
+    if (raw === null) return 5;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 5;
+  } catch {
+    return 5;
+  }
+}
+
+let lastActivityAtMs = Date.now();
+
+export function recordUserActivity(force = false): void {
+  const now = Date.now();
+  if (!force && now - lastActivityAtMs < 500) return;
+  lastActivityAtMs = now;
+}
+
+export function getLastUserActivityAt(): number {
+  return lastActivityAtMs;
+}
+
+export function getAutoLockRemainingMs(): number {
+  const mins = getAutoLockTimeoutMinutes();
+  if (mins <= 0) return 0;
+  const elapsed = Math.max(0, Date.now() - lastActivityAtMs);
+  return Math.max(0, mins * 60_000 - elapsed);
+}
+
+export function setAutoLockTimeoutMinutes(minutes: number): void {
+  try {
+    localStorage.setItem(LOCK_TIMEOUT_MIN_KEY, String(Math.max(0, Math.round(minutes))));
+    recordUserActivity(true);
   } catch {
     // Ignore storage errors
   }
@@ -104,6 +158,48 @@ export function saveLockAccountName(name: string): void {
   }
 }
 
+export function getPinLockoutState(): PinLockoutState {
+  try {
+    const raw = localStorage.getItem(LOCK_ATTEMPT_STATE_KEY);
+    if (!raw) return { failedAttempts: 0, lockedUntilMs: 0 };
+    const parsed = JSON.parse(raw) as Partial<PinLockoutState>;
+    const failedAttempts = Math.max(0, Number(parsed.failedAttempts || 0));
+    const lockedUntilMs = Math.max(0, Number(parsed.lockedUntilMs || 0));
+    return { failedAttempts, lockedUntilMs };
+  } catch {
+    return { failedAttempts: 0, lockedUntilMs: 0 };
+  }
+}
+
+export function clearPinLockoutState(): void {
+  try {
+    localStorage.removeItem(LOCK_ATTEMPT_STATE_KEY);
+  } catch {
+    // Ignore
+  }
+}
+
+export function recordFailedPinAttempt(): PinLockoutState {
+  const cur = getPinLockoutState();
+  const nextCount = cur.failedAttempts + 1;
+  let cooldownMs = 0;
+  if (nextCount >= 8) {
+    cooldownMs = 30000;
+  } else if (nextCount >= 5) {
+    cooldownMs = 10000;
+  }
+  const next: PinLockoutState = {
+    failedAttempts: nextCount,
+    lockedUntilMs: cooldownMs > 0 ? Date.now() + cooldownMs : 0,
+  };
+  try {
+    localStorage.setItem(LOCK_ATTEMPT_STATE_KEY, JSON.stringify(next));
+  } catch {
+    // Ignore
+  }
+  return next;
+}
+
 export async function saveAppPin(pin: string): Promise<void> {
   if (!isValidPinFormat(pin)) {
     throw new Error('PIN must be exactly 4 digits.');
@@ -112,6 +208,7 @@ export async function saveAppPin(pin: string): Promise<void> {
   try {
     localStorage.setItem(PIN_HASH_KEY, hashed);
     localStorage.setItem(PIN_LOCK_ENABLED_KEY, 'true');
+    clearPinLockoutState();
   } catch {
     throw new Error('Unable to save PIN on this device.');
   }
@@ -123,7 +220,11 @@ export async function verifyAppPin(pin: string): Promise<boolean> {
     const stored = localStorage.getItem(PIN_HASH_KEY);
     if (!stored) return false;
     const candidate = await hashPin(pin);
-    return candidate === stored;
+    const matched = candidate === stored;
+    if (matched) {
+      clearPinLockoutState();
+    }
+    return matched;
   } catch {
     return false;
   }
@@ -132,6 +233,7 @@ export async function verifyAppPin(pin: string): Promise<boolean> {
 export function clearAppPin(): void {
   try {
     localStorage.removeItem(PIN_HASH_KEY);
+    clearPinLockoutState();
   } catch {
     // Ignore storage errors
   }
@@ -255,60 +357,86 @@ function isRunningInIframe(): boolean {
   }
 }
 
-export async function checkBiometricSupport(): Promise<BiometricSupportStatus> {
-  const inIframe = isRunningInIframe();
-  if (typeof window === 'undefined' || !window.isSecureContext) {
-    return {
-      available: false,
-      inIframe,
-      reason: 'Biometrics require a secure HTTPS or installed PWA context.',
-    };
-  }
-  if (typeof window.PublicKeyCredential === 'undefined' || !navigator.credentials) {
-    return {
-      available: false,
-      inIframe,
-      reason: 'This browser does not support WebAuthn platform biometrics.',
-    };
-  }
+export function getCachedBiometricSupport(): BiometricSupportStatus | null {
+  return cachedBioSupport;
+}
 
-  try {
-    const platformOk = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-    if (!platformOk) {
-      return {
+export async function checkBiometricSupport(): Promise<BiometricSupportStatus> {
+  if (cachedBioSupport) return cachedBioSupport;
+  if (bioSupportPromise) return bioSupportPromise;
+
+  bioSupportPromise = (async () => {
+    const inIframe = isRunningInIframe();
+    if (typeof window === 'undefined' || !window.isSecureContext) {
+      cachedBioSupport = {
         available: false,
         inIframe,
-        reason: 'No Fingerprint or Face ID authenticator detected on this device.',
+        reason: 'Biometrics require a secure HTTPS or installed PWA context.',
       };
+      return cachedBioSupport;
     }
-    return {
-      available: true,
-      inIframe,
-      reason: inIframe
-        ? 'Embedded preview frames may restrict hardware biometric prompts. Open in a full browser tab or install as a PWA if prompted.'
-        : undefined,
-    };
-  } catch {
-    return {
-      available: false,
-      inIframe,
-      reason: 'Could not query device biometric hardware.',
-    };
-  }
+    if (typeof window.PublicKeyCredential === 'undefined' || !navigator.credentials) {
+      cachedBioSupport = {
+        available: false,
+        inIframe,
+        reason: 'This browser does not support WebAuthn platform biometrics.',
+      };
+      return cachedBioSupport;
+    }
+
+    try {
+      const platformOk =
+        await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      if (!platformOk) {
+        cachedBioSupport = {
+          available: false,
+          inIframe,
+          reason: 'No Fingerprint or Face ID authenticator detected on this device.',
+        };
+        return cachedBioSupport;
+      }
+      cachedBioSupport = {
+        available: true,
+        inIframe,
+        reason: inIframe
+          ? 'Embedded preview frames may restrict hardware biometric prompts. Open in a full browser tab or install as a PWA if prompted.'
+          : undefined,
+      };
+      return cachedBioSupport;
+    } catch {
+      cachedBioSupport = {
+        available: false,
+        inIframe,
+        reason: 'Could not query device biometric hardware.',
+      };
+      return cachedBioSupport;
+    }
+  })();
+
+  return bioSupportPromise;
+}
+
+// Pre-warm hardware capability check immediately at module load (runs during startup animation)
+if (typeof window !== 'undefined') {
+  void checkBiometricSupport();
 }
 
 function describeWebAuthnError(err: unknown, modalityLabel: string, inIframe: boolean): string {
   const name = (err as { name?: string })?.name || '';
   const msg = (err instanceof Error ? err.message : String(err || '')).toLowerCase();
 
-  if (name === 'SecurityError' || msg.includes('permissions policy') || msg.includes('publickey-credentials')) {
+  if (
+    name === 'SecurityError' ||
+    msg.includes('permissions policy') ||
+    msg.includes('publickey-credentials')
+  ) {
     return inIframe
-      ? `${modalityLabel} prompt was blocked inside the embedded preview frame. Open the app in its own browser tab or install it as a PWA to use hardware biometrics.`
+      ? `${modalityLabel} prompt was blocked inside the embedded preview frame. Open in a browser tab or installed PWA for native biometrics.`
       : `${modalityLabel} security policy blocked access on this origin.`;
   }
   if (name === 'NotAllowedError') {
     if (inIframe && msg.includes('not allowed')) {
-      return `${modalityLabel} cancelled or blocked by embedded frame policy. Open in a standalone tab / installed PWA for native sensors.`;
+      return `${modalityLabel} cancelled or blocked by embedded frame policy. Open in a standalone tab or PWA for native sensors.`;
     }
     return `${modalityLabel} verification cancelled or timed out.`;
   }
@@ -357,7 +485,7 @@ export async function enrollBiometric(
           userVerification: 'required',
           residentKey: 'preferred',
         },
-        timeout: 60000,
+        timeout: 45000,
         attestation: 'none',
       },
     })) as PublicKeyCredential | null;
@@ -449,7 +577,7 @@ export async function verifyBiometric(
           transports: ['internal' as AuthenticatorTransport],
         })),
         userVerification: 'required',
-        timeout: 60000,
+        timeout: 45000,
       },
     })) as PublicKeyCredential | null;
 
@@ -460,6 +588,7 @@ export async function verifyBiometric(
       };
     }
 
+    clearPinLockoutState();
     const returnedId = arrayBufferToBase64Url(assertion.rawId);
     const matched = candidates.find((c) => c.credentialId === returnedId) || candidates[0];
     return {

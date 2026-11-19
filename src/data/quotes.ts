@@ -147,11 +147,35 @@ export const DEFAULT_ALARMS: SessionAlarm[] = [
 ];
 
 export const DEFAULT_PLAYBOOK: Playbook = {
-  core: '',
-  rev: '',
-  cont: '',
-  entry: '',
-  risk: '',
+  core: [
+    'Map higher-timeframe liquidity & previous session highs/lows',
+    'Wait for active session killzone expansion before acting',
+    'Trade only documented A+ setups with clear invalidation',
+  ].join('\n'),
+  rev: [
+    'Higher-timeframe liquidity draw identified (PDH/PDL, BSL/SSL)',
+    'Clean sweep of key swing high or swing low',
+    'Strong displacement candle with Market Structure Shift (MSS)',
+    'Retracement into unmitigated FVG or Order Block',
+  ].join('\n'),
+  cont: [
+    'Higher-timeframe directional bias clearly aligned',
+    'Break of structure confirming institutional order flow',
+    'Pullback into premium/discount POI (FVG or Breaker)',
+    'Lower-timeframe confirmation shift before entry',
+  ].join('\n'),
+  entry: [
+    'Inside active London or New York killzone window',
+    'Clear target liquidity with >= 2R reward-to-risk',
+    'No high-impact red-folder news within 15 minutes',
+    'Calm emotional state — no chasing or revenge sizing',
+  ].join('\n'),
+  risk: [
+    'Fixed risk <= 1% of account capital per setup',
+    'Hard stop loss placed beyond structural swing invalidation',
+    'Move stop to breakeven only at planned structural milestone',
+    'Respect daily max drawdown limit without exception',
+  ].join('\n'),
 };
 
 export function createDefaultState(): JournalState {
@@ -160,6 +184,7 @@ export function createDefaultState(): JournalState {
     models: [],
     fields: DEFAULT_FIELDS.map((f) => ({ ...f, options: [...f.options] })),
     playbook: { ...DEFAULT_PLAYBOOK },
+    playbookChecks: {},
     alarms: DEFAULT_ALARMS.map((a) => ({ ...a })),
     profile: { name: '', market: '' },
     settings: { quoteFrequency: 60, quoteNotifications: false },

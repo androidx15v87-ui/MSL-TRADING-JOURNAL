@@ -52,101 +52,53 @@ interface ChatRequestBody {
 const APP_CONTROL_TOOLS: FunctionDeclaration[] = [
   {
     name: 'navigate_app',
-    description:
-      'Navigate the user to a specific screen in MSL Trading Journal (dashboard, journal, calendar, models, analytics, playbook, ai, settings).',
+    description: 'Navigate to screen: dashboard, journal, calendar, models, analytics, playbook, ai, or settings.',
     parameters: {
       type: Type.OBJECT,
       properties: {
-        page: {
-          type: Type.STRING,
-          description:
-            'Target screen ID: dashboard, journal, calendar, models, analytics, playbook, ai, or settings.',
-        },
+        page: { type: Type.STRING, description: 'Target screen ID.' },
       },
       required: ['page'],
     },
   },
   {
     name: 'open_log_trade_modal',
-    description:
-      'Open the Log Trade modal so the user can fill in or attach screenshots to a trade entry.',
+    description: 'Open the Log Trade modal, optionally pre-filling YYYY-MM-DD.',
     parameters: {
       type: Type.OBJECT,
       properties: {
-        initialDate: {
-          type: Type.STRING,
-          description: 'Optional YYYY-MM-DD date to pre-fill in the trade modal.',
-        },
+        initialDate: { type: Type.STRING, description: 'Optional YYYY-MM-DD date.' },
       },
     },
   },
   {
     name: 'log_trade',
-    description:
-      'Log and immediately save a new trade into the journal (both local IndexedDB and Cloud Firestore when signed in). Use whenever the user asks to log, record, or add a trade.',
+    description: 'Save a new trade to the journal when requested.',
     parameters: {
       type: Type.OBJECT,
       properties: {
-        pair: {
-          type: Type.STRING,
-          description: 'Trading symbol/pair such as EURUSD, XAUUSD, NQ, ES, BTCUSD.',
-        },
-        direction: {
-          type: Type.STRING,
-          description: 'Long or Short.',
-        },
-        setup: {
-          type: Type.STRING,
-          description: 'Setup category: Reversal, Continuation, Breakout, or Other.',
-        },
-        session: {
-          type: Type.STRING,
-          description: 'Trading session: London, New York, Asia, Overlap, or Other.',
-        },
-        result: {
-          type: Type.STRING,
-          description: 'Outcome: Win, Loss, or BE.',
-        },
-        r: {
-          type: Type.NUMBER,
-          description: 'Net R-multiple realized (e.g. 2.5 for Win, -1 for Loss, 0 for BE).',
-        },
-        risk: {
-          type: Type.NUMBER,
-          description: 'Planned risk in R units (defaults to 1).',
-        },
-        model: {
-          type: Type.STRING,
-          description: 'Optional setup/model name.',
-        },
-        tags: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING },
-          description: 'Optional execution tags such as Patient, A+ Setup, FOMO.',
-        },
-        notes: {
-          type: Type.STRING,
-          description: 'Optional execution notes or commentary.',
-        },
-        date: {
-          type: Type.STRING,
-          description: 'Optional local ISO datetime YYYY-MM-DDTHH:mm.',
-        },
+        pair: { type: Type.STRING, description: 'Symbol (e.g. EURUSD, XAUUSD, NQ).' },
+        direction: { type: Type.STRING, description: 'Long or Short.' },
+        setup: { type: Type.STRING, description: 'Reversal, Continuation, Breakout, or Other.' },
+        session: { type: Type.STRING, description: 'London, New York, Asia, Overlap, or Other.' },
+        result: { type: Type.STRING, description: 'Win, Loss, or BE.' },
+        r: { type: Type.NUMBER, description: 'Realized R-multiple.' },
+        risk: { type: Type.NUMBER, description: 'Risk in R (default 1).' },
+        model: { type: Type.STRING, description: 'Model name.' },
+        tags: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'Execution tags.' },
+        notes: { type: Type.STRING, description: 'Trade notes.' },
+        date: { type: Type.STRING, description: 'Optional YYYY-MM-DDTHH:mm.' },
       },
       required: ['pair', 'direction', 'result', 'r'],
     },
   },
   {
     name: 'update_trade',
-    description:
-      'Update fields on an existing trade identified by its tradeId from the Live Journal Snapshot.',
+    description: 'Update an existing trade by tradeId.',
     parameters: {
       type: Type.OBJECT,
       properties: {
-        tradeId: {
-          type: Type.STRING,
-          description: 'Exact trade id from the Live Journal Snapshot.',
-        },
+        tradeId: { type: Type.STRING, description: 'Trade id from snapshot.' },
         pair: { type: Type.STRING },
         direction: { type: Type.STRING },
         setup: { type: Type.STRING },
@@ -155,10 +107,7 @@ const APP_CONTROL_TOOLS: FunctionDeclaration[] = [
         r: { type: Type.NUMBER },
         risk: { type: Type.NUMBER },
         model: { type: Type.STRING },
-        tags: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING },
-        },
+        tags: { type: Type.ARRAY, items: { type: Type.STRING } },
         notes: { type: Type.STRING },
       },
       required: ['tradeId'],
@@ -166,105 +115,81 @@ const APP_CONTROL_TOOLS: FunctionDeclaration[] = [
   },
   {
     name: 'delete_trade',
-    description:
-      'Delete an existing trade from the journal by its tradeId when explicitly requested by the user.',
+    description: 'Delete a trade by tradeId when explicitly requested.',
     parameters: {
       type: Type.OBJECT,
       properties: {
-        tradeId: {
-          type: Type.STRING,
-          description: 'Exact trade id from the Live Journal Snapshot.',
-        },
+        tradeId: { type: Type.STRING, description: 'Trade id from snapshot.' },
       },
       required: ['tradeId'],
     },
   },
   {
     name: 'create_trading_model',
-    description: 'Create and save a new trading model/setup template in the Models library.',
+    description: 'Create and save a trading model template.',
     parameters: {
       type: Type.OBJECT,
       properties: {
-        name: { type: Type.STRING, description: 'Model name, e.g. London Sweep Reversal.' },
+        name: { type: Type.STRING, description: 'Model name.' },
         type: { type: Type.STRING, description: 'Reversal, Continuation, or Both.' },
-        entry: { type: Type.STRING, description: 'Entry confirmation criteria.' },
-        risk: { type: Type.STRING, description: 'Invalidation and target management rules.' },
+        entry: { type: Type.STRING, description: 'Entry criteria.' },
+        risk: { type: Type.STRING, description: 'Invalidation & target rules.' },
       },
       required: ['name', 'type', 'entry', 'risk'],
     },
   },
   {
     name: 'update_playbook',
-    description:
-      'Update one or more sections of the user’s trading Playbook (core, rev, cont, entry, risk).',
+    description: 'Update playbook sections: core, rev, cont, entry, risk.',
     parameters: {
       type: Type.OBJECT,
       properties: {
-        core: { type: Type.STRING, description: 'Core model philosophy / edge.' },
-        rev: { type: Type.STRING, description: 'Reversal rules.' },
-        cont: { type: Type.STRING, description: 'Continuation rules.' },
-        entry: { type: Type.STRING, description: 'Entry filters & timing triggers.' },
-        risk: { type: Type.STRING, description: 'Invalidation, scaling & targets.' },
+        core: { type: Type.STRING },
+        rev: { type: Type.STRING },
+        cont: { type: Type.STRING },
+        entry: { type: Type.STRING },
+        risk: { type: Type.STRING },
       },
     },
   },
   {
     name: 'update_session_alarm',
-    description:
-      'Create or update a session alarm in Settings (e.g., London Open, New York Open, Asia Open, or custom session alarm).',
+    description: 'Create or update a session alarm in Settings.',
     parameters: {
       type: Type.OBJECT,
       properties: {
-        name: { type: Type.STRING, description: 'Alarm name, e.g. London Open.' },
-        time: { type: Type.STRING, description: '24h time in HH:mm format, e.g. 08:00.' },
-        enabled: { type: Type.BOOLEAN, description: 'Whether the alarm is active.' },
+        name: { type: Type.STRING, description: 'Alarm name.' },
+        time: { type: Type.STRING, description: '24h HH:mm.' },
+        enabled: { type: Type.BOOLEAN },
       },
       required: ['name'],
     },
   },
   {
     name: 'cycle_motivational_quote',
-    description: 'Refresh or cycle the trading discipline quote shown on the dashboard.',
-    parameters: {
-      type: Type.OBJECT,
-      properties: {},
-    },
+    description: 'Cycle the dashboard discipline quote.',
+    parameters: { type: Type.OBJECT, properties: {} },
   },
   {
     name: 'save_memory',
-    description:
-      'Save a durable long-term memory about the user across all future conversations (preferences, personal rules, risk limits, goals, communication style, or personal facts). Use automatically when the user asks you to remember something or shares an important lasting preference/rule/goal.',
+    description: 'Save a durable cross-conversation memory (preference, rule, goal, context).',
     parameters: {
       type: Type.OBJECT,
       properties: {
-        content: {
-          type: Type.STRING,
-          description:
-            'Concise, clear statement of the fact, preference, rule, or goal to remember permanently (max 600 chars).',
-        },
-        category: {
-          type: Type.STRING,
-          description: 'Category: preference, rule, goal, or context.',
-        },
+        content: { type: Type.STRING, description: 'Concise memory statement (max 600 chars).' },
+        category: { type: Type.STRING, description: 'preference, rule, goal, or context.' },
       },
       required: ['content'],
     },
   },
   {
     name: 'forget_memory',
-    description:
-      'Delete an existing saved memory by its memoryId from Saved User Memories or by a matching phrase/keyword query when the user asks you to forget or remove it.',
+    description: 'Remove a saved memory by memoryId or matching query.',
     parameters: {
       type: Type.OBJECT,
       properties: {
-        memoryId: {
-          type: Type.STRING,
-          description: 'Exact memory id from Saved User Memories when available.',
-        },
-        query: {
-          type: Type.STRING,
-          description: 'Keyword or phrase matching the memory to remove if id is unknown.',
-        },
+        memoryId: { type: Type.STRING },
+        query: { type: Type.STRING },
       },
     },
   },
@@ -303,28 +228,69 @@ function getAiClient(apiVersion?: 'v1alpha'): GoogleGenAI | null {
   return cachedDefaultAiClient;
 }
 
-function buildSystemInstruction(journalContext?: string, voiceTurn = false): string {
+function buildSystemInstruction(journalContext?: string): string {
   return [
-    `You are MSL AI (Version ${APP_VERSION}) — a sharp, high-velocity, first-principles intelligence combining broad polymath mastery (macroeconomics, markets, probability, game theory, coding, science, technology, strategy, philosophy, behavioral psychology, and general world knowledge) with institutional trading coaching and direct app control.`,
-    '',
-    'Communication & Reasoning Standard:',
-    '- Lead immediately with the sharpest, truest, most useful answer. Zero robotic disclaimers, zero fluff, zero throat-clearing.',
-    '- Think from first principles with Grok-style witless clarity, precision, and intellectual honesty: cut straight to the signal, quantify trade-offs, and surface non-obvious second-order insights.',
-    voiceTurn
-      ? '- LIVE VOICE CONVERSATION MODE: Respond directly like an ultra-sharp UK English live voice partner in 1 to 3 concise spoken sentences (aim for 20-55 words unless the user asks for an extended explanation). Speak in natural conversational prose with zero Markdown tables, headers, code blocks, or bullet lists so audio starts and finishes rapidly.'
-      : '- When formatting answers, use clean Markdown (tight bold section labels, scannable bullets, compact Markdown tables for numbers/comparisons). Keep voice-friendly flow natural and easy to hear.',
-    '- Ground every trade ID, metric, Total PnL (Total Profits, Total Losses, Net PnL), win rate, setup, session, tag, and note strictly in the Live Journal Snapshot below—never invent trades or numbers.',
-    '- On chart screenshots, deliver a clinical 4-part read: (1) Structure & Directional Bias, (2) Liquidity / POI / Displacement, (3) Entry & Invalidation Placement, (4) R:R & Execution Verdict.',
-    '',
-    'Persistent Memory & App Control Tools:',
-    '- Tools: `save_memory`, `forget_memory`, `navigate_app`, `open_log_trade_modal`, `log_trade`, `update_trade`, `delete_trade`, `create_trading_model`, `update_playbook`, `update_session_alarm`, `cycle_motivational_quote`.',
-    '- Cross-Conversation Memory: Respect every item in `Saved User Memories` above as enduring truth across all chats and live voice turns. Whenever the user says "remember...", shares lasting personal context, states a strict trading rule/risk limit, or reveals an ongoing goal/preference, call `save_memory` proactively (only for durable facts—never transient one-off questions). When asked to forget or correct a memory, call `forget_memory` (and `save_memory` if replacing it).',
-    '- Call journal/navigation tools ONLY when the user explicitly requests an app action. Confirm executed actions crisply in 1-2 sentences.',
-    '',
+    `You are KAIROS — a sharp, high-velocity intelligence for markets, quantitative trading analysis, probability, coding, general knowledge, and direct MSL Journal control.`,
+    '- Adapt depth to the prompt: crisp 1–3 sentences for quick asks; structured Markdown/tables/code for analytical audits or deep dives.',
+    '- Ground all trade IDs, PnL, win rate, setups, and notes strictly in the Live Journal Snapshot.',
+    '- On charts: read Structure & Bias, Liquidity/POI, Entry/Invalidation, and R:R Verdict.',
+    '- Respect `Saved User Memories`. Use `save_memory` / `forget_memory` for lasting preferences/rules. Call app tools only when requested.',
     journalContext
-      ? `--- LIVE JOURNAL SNAPSHOT & MEMORIES ---\n${journalContext}\n--- END SNAPSHOT ---`
+      ? `--- SNAPSHOT ---\n${journalContext}\n--- END ---`
       : 'No live journal snapshot attached.',
   ].join('\n');
+}
+
+const modelCooldownUntil = new Map<string, number>();
+
+function isRateLimitError(err: unknown): boolean {
+  const raw = (err instanceof Error ? err.message : String(err || '')).toLowerCase();
+  return (
+    raw.includes('resource_exhausted') ||
+    raw.includes('429') ||
+    raw.includes('quota') ||
+    raw.includes('rate limit') ||
+    raw.includes('too many requests')
+  );
+}
+
+function parseRetryDelayMs(err: unknown): number | null {
+  const raw = err instanceof Error ? err.message : String(err || '');
+  const match = raw.match(/retry(?:\s+in|\s+after)?\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(ms|s)/i);
+  if (!match) return null;
+  const val = Number(match[1]);
+  if (!Number.isFinite(val)) return null;
+  const ms = match[2].toLowerCase() === 'ms' ? val : val * 1000;
+  return Math.min(3500, Math.max(500, Math.round(ms)));
+}
+
+function markModelCooldown(modelName: string, err: unknown): void {
+  const rateLimited = isRateLimitError(err);
+  const parsed = parseRetryDelayMs(err);
+  const durationMs = rateLimited ? Math.max(18000, (parsed || 2000) * 6) : 7000;
+  modelCooldownUntil.set(modelName, Date.now() + durationMs);
+}
+
+function isModelHealthy(modelName: string): boolean {
+  const until = modelCooldownUntil.get(modelName) || 0;
+  return Date.now() >= until;
+}
+
+function orderByHealth<T extends { model: string }>(items: T[]): T[] {
+  const healthy: T[] = [];
+  const cooling: T[] = [];
+  for (const item of items) {
+    if (isModelHealthy(item.model)) {
+      healthy.push(item);
+    } else {
+      cooling.push(item);
+    }
+  }
+  return [...healthy, ...cooling];
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function formatGeminiError(err: unknown): { status: number; message: string } {
@@ -340,7 +306,7 @@ function formatGeminiError(err: unknown): { status: number; message: string } {
   if (lower.includes('resource_exhausted') || lower.includes('429') || lower.includes('quota')) {
     return {
       status: 429,
-      message: 'Rate limit or quota reached. Please wait a moment and try again.',
+      message: 'KAIROS is temporarily busy across model lanes. Tap Retry in a couple seconds.',
     };
   }
   if (
@@ -352,7 +318,7 @@ function formatGeminiError(err: unknown): { status: number; message: string } {
   ) {
     return {
       status: 503,
-      message: 'MSL AI is experiencing temporary server demand. Please tap send again.',
+      message: 'KAIROS is experiencing temporary server demand. Please tap Retry.',
     };
   }
   if (lower.includes('not_found') || lower.includes('404')) {
@@ -376,6 +342,9 @@ function isRetryableModelError(err: unknown): boolean {
     raw.includes('overloaded') ||
     raw.includes('timed out') ||
     raw.includes('429') ||
+    raw.includes('resource_exhausted') ||
+    raw.includes('quota') ||
+    raw.includes('rate limit') ||
     raw.includes('404') ||
     raw.includes('not_found')
   );
@@ -802,42 +771,46 @@ async function startServer() {
     }
 
     const isDeep = body?.mode === 'deep';
-    const isVoiceTurn = Boolean(body?.voiceTurn);
     const speakSync = Boolean(body?.speakSync);
-    const systemInstruction = buildSystemInstruction(body?.journalContext, isVoiceTurn);
-    const maxHistory = isVoiceTurn ? 10 : 14;
-    const windowedMessages =
-      !isDeep && messages.length > maxHistory
-        ? [messages[0], ...messages.slice(-(maxHistory - 1))]
-        : messages;
+    const systemInstruction = buildSystemInstruction(body?.journalContext);
+    const compactSystemInstruction = buildSystemInstruction(
+      body?.journalContext ? body.journalContext.slice(0, 1200) : undefined
+    );
 
-    const contents: Content[] = windowedMessages.map((msg) => {
-      const parts: Part[] = [];
-
-      if (Array.isArray(msg.images)) {
-        for (const img of msg.images) {
-          if (img?.data && img?.mimeType) {
-            parts.push({
-              inlineData: {
-                mimeType: img.mimeType,
-                data: img.data,
-              },
-            });
+    const buildContents = (msgList: IncomingMessage[], maxMsgs: number, keepImagesLastN: number): Content[] => {
+      const sliced =
+        msgList.length > maxMsgs
+          ? [msgList[0], ...msgList.slice(-(maxMsgs - 1))]
+          : msgList;
+      const imgCutoffIdx = Math.max(0, sliced.length - keepImagesLastN);
+      return sliced.map((msg, idx) => {
+        const parts: Part[] = [];
+        if (idx >= imgCutoffIdx && Array.isArray(msg.images)) {
+          for (const img of msg.images) {
+            if (img?.data && img?.mimeType) {
+              parts.push({
+                inlineData: {
+                  mimeType: img.mimeType,
+                  data: img.data,
+                },
+              });
+            }
           }
         }
-      }
+        if (msg.text && msg.text.trim().length > 0) {
+          parts.push({ text: msg.text });
+        } else if (parts.length === 0) {
+          parts.push({ text: ' ' });
+        }
+        return {
+          role: msg.role === 'model' ? 'model' : 'user',
+          parts,
+        };
+      });
+    };
 
-      if (msg.text && msg.text.trim().length > 0) {
-        parts.push({ text: msg.text });
-      } else if (parts.length === 0) {
-        parts.push({ text: ' ' });
-      }
-
-      return {
-        role: msg.role === 'model' ? 'model' : 'user',
-        parts,
-      };
-    });
+    const contents: Content[] = buildContents(messages, isDeep ? 12 : 8, isDeep ? 2 : 1);
+    const compactContents: Content[] = buildContents(messages, 4, 1);
 
     res.socket?.setNoDelay(true);
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -966,104 +939,127 @@ async function startServer() {
       }
     };
 
-    const candidatesToTry: Array<{ model: string; level: ThinkingLevel; timeoutMs: number }> = isDeep
+    const baseCandidates: Array<{ model: string; level: ThinkingLevel; timeoutMs: number }> = isDeep
       ? [
-          { model: FAST_MODEL_NAME, level: ThinkingLevel.HIGH, timeoutMs: 12000 },
-          { model: HYDROGEN_MODEL_NAME, level: ThinkingLevel.MEDIUM, timeoutMs: 12000 },
+          { model: FAST_MODEL_NAME, level: ThinkingLevel.MEDIUM, timeoutMs: 8000 },
+          { model: HYDROGEN_MODEL_NAME, level: ThinkingLevel.MEDIUM, timeoutMs: 8500 },
         ]
       : [
-          {
-            model: FAST_MODEL_NAME,
-            level: ThinkingLevel.MINIMAL,
-            timeoutMs: isVoiceTurn ? 4600 : 7500,
-          },
-          { model: HYDROGEN_MODEL_NAME, level: ThinkingLevel.LOW, timeoutMs: 9500 },
+          { model: FAST_MODEL_NAME, level: ThinkingLevel.MINIMAL, timeoutMs: 4800 },
+          { model: HYDROGEN_MODEL_NAME, level: ThinkingLevel.LOW, timeoutMs: 6500 },
         ];
 
+    const retryBackoffs = [0, 300, 850];
+
     try {
-      let activeModel = candidatesToTry[0].model;
+      let activeModel = baseCandidates[0].model;
       let streamedText = '';
       const collectedCalls: FunctionCall[] = [];
       const modelTurnParts: Part[] = [];
       let succeeded = false;
       let lastErr: unknown = null;
 
-      for (const candidate of candidatesToTry) {
-        if (res.writableEnded || clientClosed) break;
+      for (let pass = 0; pass < retryBackoffs.length; pass++) {
+        if (res.writableEnded || clientClosed || succeeded) break;
 
-        let candidateStreamed = '';
-        const candidateCalls: FunctionCall[] = [];
-        const candidateParts: Part[] = [];
+        if (pass > 0) {
+          const parsedDelay = parseRetryDelayMs(lastErr);
+          const waitMs = Math.min(3200, (parsedDelay || retryBackoffs[pass]) + Math.floor(Math.random() * 260));
+          sendEvent({
+            type: 'status',
+            status: pass === 1 ? 'Switching to optimal model lane…' : 'Completing connection…',
+          });
+          await sleepMs(waitMs);
+          if (res.writableEnded || clientClosed) break;
+        }
 
-        try {
-          const stream1 = await withTimeout(
-            ai.models.generateContentStream({
-              model: candidate.model,
-              contents,
-              config: {
-                systemInstruction,
-                thinkingConfig: {
-                  thinkingLevel: candidate.level,
+        const orderedCandidates = orderByHealth(baseCandidates);
+        const passContents = pass === 0 ? contents : compactContents;
+        const passInstruction = pass <= 1 ? systemInstruction : compactSystemInstruction;
+
+        for (const candidate of orderedCandidates) {
+          if (res.writableEnded || clientClosed) break;
+
+          let candidateStreamed = '';
+          const candidateCalls: FunctionCall[] = [];
+          const candidateParts: Part[] = [];
+
+          try {
+            const stream1 = await withTimeout(
+              ai.models.generateContentStream({
+                model: candidate.model,
+                contents: passContents,
+                config: {
+                  systemInstruction: passInstruction,
+                  thinkingConfig: {
+                    thinkingLevel: pass >= 2 ? ThinkingLevel.LOW : candidate.level,
+                  },
+                  tools: [{ functionDeclarations: APP_CONTROL_TOOLS }],
                 },
-                tools: [{ functionDeclarations: APP_CONTROL_TOOLS }],
-              },
-            }),
-            candidate.timeoutMs,
-            candidate.model
-          );
-
-          const iterator = stream1[Symbol.asyncIterator]();
-          while (true) {
-            if (res.writableEnded || clientClosed) break;
-            const nextResult = await withTimeout(
-              iterator.next(),
-              candidateStreamed || candidateCalls.length > 0 ? 15000 : candidate.timeoutMs,
-              `${candidate.model} chunk`
+              }),
+              candidate.timeoutMs,
+              candidate.model
             );
-            if (nextResult.done) break;
 
-            const chunk = nextResult.value;
-            const text = chunk.text;
-            if (text) {
-              candidateStreamed += text;
-              streamedText += text;
-              pushDelta(text);
-            }
+            const iterator = stream1[Symbol.asyncIterator]();
+            while (true) {
+              if (res.writableEnded || clientClosed) break;
+              const nextResult = await withTimeout(
+                iterator.next(),
+                candidateStreamed || candidateCalls.length > 0 ? 15000 : candidate.timeoutMs,
+                `${candidate.model} chunk`
+              );
+              if (nextResult.done) break;
 
-            const parts = chunk.candidates?.[0]?.content?.parts;
-            if (Array.isArray(parts)) {
-              for (const part of parts) {
-                candidateParts.push(part);
+              const chunk = nextResult.value;
+              const text = chunk.text;
+              if (text) {
+                candidateStreamed += text;
+                streamedText += text;
+                pushDelta(text);
               }
-            }
 
-            if (Array.isArray(chunk.functionCalls) && chunk.functionCalls.length > 0) {
-              for (const fc of chunk.functionCalls) {
-                if (fc?.name) {
-                  candidateCalls.push(fc);
+              const parts = chunk.candidates?.[0]?.content?.parts;
+              if (Array.isArray(parts)) {
+                for (const part of parts) {
+                  candidateParts.push(part);
+                }
+              }
+
+              if (Array.isArray(chunk.functionCalls) && chunk.functionCalls.length > 0) {
+                for (const fc of chunk.functionCalls) {
+                  if (fc?.name) {
+                    candidateCalls.push(fc);
+                  }
                 }
               }
             }
-          }
 
-          collectedCalls.push(...candidateCalls);
-          modelTurnParts.push(...candidateParts);
-          activeModel = candidate.model;
-          succeeded = true;
-          break;
-        } catch (err) {
-          lastErr = err;
-          if (!candidateStreamed && candidateCalls.length === 0 && isRetryableModelError(err)) {
-            continue;
-          }
-          if (candidateStreamed || candidateCalls.length > 0) {
+            modelCooldownUntil.delete(candidate.model);
             collectedCalls.push(...candidateCalls);
             modelTurnParts.push(...candidateParts);
             activeModel = candidate.model;
             succeeded = true;
             break;
+          } catch (err) {
+            lastErr = err;
+            if (!candidateStreamed && candidateCalls.length === 0 && isRetryableModelError(err)) {
+              markModelCooldown(candidate.model, err);
+              continue;
+            }
+            if (candidateStreamed || candidateCalls.length > 0) {
+              collectedCalls.push(...candidateCalls);
+              modelTurnParts.push(...candidateParts);
+              activeModel = candidate.model;
+              succeeded = true;
+              break;
+            }
+            throw err;
           }
-          throw err;
+        }
+
+        if (!succeeded && lastErr && !isRetryableModelError(lastErr)) {
+          break;
         }
       }
 
@@ -1081,23 +1077,31 @@ async function startServer() {
         });
 
         if (!streamedText.trim()) {
-          const uiOnlyActions = new Set([
+          const instantConfirmActions = new Set([
             'navigate_app',
             'open_log_trade_modal',
             'cycle_motivational_quote',
+            'save_memory',
+            'forget_memory',
+            'log_trade',
+            'update_trade',
+            'delete_trade',
+            'create_trading_model',
+            'update_playbook',
+            'update_session_alarm',
           ]);
           const lastUserText = (messages[messages.length - 1]?.text || '').trim().toLowerCase();
           const hasAnalyticalAsk =
             lastUserText.includes('?') ||
-            /\b(and|also|explain|why|how|suggest|analyze|audit|review|compare|improve|help)\b/.test(
+            /\b(explain|why|how|suggest|analyze|audit|review|compare|improve|advice|feedback|recommend)\b/.test(
               lastUserText
             );
-          const isPureQuickUiCommand =
-            collectedCalls.every((fc) => uiOnlyActions.has(fc.name || '')) &&
-            lastUserText.length <= 70 &&
+          const isInstantActionOnly =
+            collectedCalls.every((fc) => instantConfirmActions.has(fc.name || '')) &&
+            lastUserText.length <= 140 &&
             !hasAnalyticalAsk;
 
-          if (isPureQuickUiCommand) {
+          if (isInstantActionOnly) {
             pushDelta(summarizeActionFallback(collectedCalls));
           } else {
             try {
@@ -1214,42 +1218,59 @@ async function startServer() {
       return;
     }
 
-    const transcribeModels = ['gemini-3.5-transcribe', FAST_MODEL_NAME];
+    const transcribeCandidates = orderByHealth([
+      { model: 'gemini-3.5-transcribe' },
+      { model: FAST_MODEL_NAME },
+      { model: HYDROGEN_MODEL_NAME },
+    ]);
     let lastTranscribeErr: unknown = null;
 
-    for (const modelName of transcribeModels) {
-      try {
-        const response = await withTimeout(
-          ai.models.generateContent({
-            model: modelName,
-            contents: {
-              parts: [
-                {
-                  inlineData: {
-                    mimeType,
-                    data: audioBase64,
+    for (let pass = 0; pass < 2; pass++) {
+      if (pass > 0) {
+        await sleepMs(300);
+      }
+      for (const { model: modelName } of transcribeCandidates) {
+        try {
+          const response = await withTimeout(
+            ai.models.generateContent({
+              model: modelName,
+              contents: {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType,
+                      data: audioBase64,
+                    },
                   },
-                },
-                {
-                  text: 'Transcribe the spoken words verbatim in plain text.',
-                },
-              ],
-            },
-            config:
-              modelName === FAST_MODEL_NAME
-                ? { thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL } }
-                : undefined,
-          }),
-          3600,
-          modelName
-        );
-        res.json({ text: (response.text || '').trim() });
-        return;
-      } catch (err) {
-        lastTranscribeErr = err;
-        if (!isRetryableModelError(err)) {
+                  {
+                    text: 'Transcribe the spoken words accurately in plain text with clean punctuation. Return only the spoken words—no commentary.',
+                  },
+                ],
+              },
+              config:
+                modelName === FAST_MODEL_NAME
+                  ? { thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL } }
+                  : modelName === HYDROGEN_MODEL_NAME
+                  ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                  : undefined,
+            }),
+            5000,
+            modelName
+          );
+          modelCooldownUntil.delete(modelName);
+          res.json({ text: (response.text || '').trim() });
+          return;
+        } catch (err) {
+          lastTranscribeErr = err;
+          if (isRetryableModelError(err)) {
+            markModelCooldown(modelName, err);
+            continue;
+          }
           break;
         }
+      }
+      if (lastTranscribeErr && !isRetryableModelError(lastTranscribeErr)) {
+        break;
       }
     }
 
@@ -1390,13 +1411,14 @@ async function startServer() {
     ];
 
     let lastSpeakErr: unknown = null;
-    const orderedAttempts =
+    const baseOrderedAttempts =
       cachedTtsAttemptLabel && ttsAttempts.some((a) => a.label === cachedTtsAttemptLabel)
         ? [
             ...ttsAttempts.filter((a) => a.label === cachedTtsAttemptLabel),
             ...ttsAttempts.filter((a) => a.label !== cachedTtsAttemptLabel),
           ]
         : ttsAttempts;
+    const orderedAttempts = orderByHealth(baseOrderedAttempts);
 
     for (const attempt of orderedAttempts) {
       try {
@@ -1408,6 +1430,7 @@ async function startServer() {
         const inlineData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData;
         const audioBase64 = inlineData?.data;
         if (audioBase64) {
+          modelCooldownUntil.delete(attempt.model);
           cachedTtsAttemptLabel = attempt.label;
           res.json({
             audioBase64,
@@ -1418,6 +1441,9 @@ async function startServer() {
         }
       } catch (err) {
         lastSpeakErr = err;
+        if (isRetryableModelError(err)) {
+          markModelCooldown(attempt.model, err);
+        }
         const rawErr = (err instanceof Error ? err.message : String(err || '')).toLowerCase();
         const canContinue =
           rawErr.includes('invalid_argument') ||
@@ -1459,10 +1485,12 @@ async function startServer() {
 
     const streamAttempts: Array<{
       label: string;
+      model: string;
       run: () => ReturnType<GoogleGenAI['models']['generateContentStream']>;
     }> = [
       {
         label: 'v1alpha-lite-stream',
+        model: TTS_MODEL_NAME,
         run: () =>
           alphaAi.models.generateContentStream({
             model: TTS_MODEL_NAME,
@@ -1482,6 +1510,7 @@ async function startServer() {
       },
       {
         label: 'default-lite-stream-uk',
+        model: TTS_MODEL_NAME,
         run: () =>
           ai.models.generateContentStream({
             model: TTS_MODEL_NAME,
@@ -1501,6 +1530,7 @@ async function startServer() {
       },
       {
         label: 'v1alpha-speechConfig-only-stream',
+        model: TTS_MODEL_NAME,
         run: () =>
           alphaAi.models.generateContentStream({
             model: TTS_MODEL_NAME,
@@ -1513,15 +1543,36 @@ async function startServer() {
             },
           }),
       },
+      {
+        label: 'v1alpha-flash-tts-stream',
+        model: 'gemini-3.8-flash-tts',
+        run: () =>
+          alphaAi.models.generateContentStream({
+            model: 'gemini-3.8-flash-tts',
+            contents: [
+              {
+                role: 'user',
+                parts: [{ text: spokenText, speechMetadata: { style: ukStyle } }],
+              },
+            ],
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: { prebuiltVoiceConfig: { voiceName } },
+              },
+            },
+          }),
+      },
     ];
 
-    const orderedStreamAttempts =
+    const baseStreamAttempts =
       cachedTtsStreamLabel && streamAttempts.some((a) => a.label === cachedTtsStreamLabel)
         ? [
             ...streamAttempts.filter((a) => a.label === cachedTtsStreamLabel),
             ...streamAttempts.filter((a) => a.label !== cachedTtsStreamLabel),
           ]
         : streamAttempts;
+    const orderedStreamAttempts = orderByHealth(baseStreamAttempts);
 
     let clientClosed = false;
     res.on('close', () => {
@@ -1540,6 +1591,7 @@ async function startServer() {
           const b64 = inlineData?.data;
           if (!b64) continue;
           if (!wroteAnyBytes) {
+            modelCooldownUntil.delete(attempt.model);
             cachedTtsStreamLabel = attempt.label;
             res.socket?.setNoDelay(true);
             res.setHeader('Content-Type', 'application/octet-stream');
@@ -1557,6 +1609,9 @@ async function startServer() {
         }
       } catch (err) {
         lastErr = err;
+        if (isRetryableModelError(err)) {
+          markModelCooldown(attempt.model, err);
+        }
         if (wroteAnyBytes) {
           if (!res.writableEnded) res.end();
           return;

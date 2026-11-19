@@ -25,13 +25,17 @@ import {
   type BiometricSupportStatus,
   checkBiometricSupport,
   enrollBiometric,
+  getAutoLockRemainingMs,
+  getAutoLockTimeoutMinutes,
   getEnrolledBiometrics,
   hasAppPin,
   isAppLockEnabled,
   isValidPinFormat,
+  recordUserActivity,
   removeBiometric,
   saveAppPin,
   setAppLockEnabled,
+  setAutoLockTimeoutMinutes,
   setBiometricAutoPrompt,
   verifyBiometric,
 } from '../lib/appLock';
@@ -95,6 +99,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   const [pinLockActive, setPinLockActive] = useState<boolean>(() => isAppLockEnabled());
   const [pinExists, setPinExists] = useState<boolean>(() => hasAppPin());
+  const [autoLockMinutes, setAutoLockMinutes] = useState<number>(() => getAutoLockTimeoutMinutes());
+  const [remainingLockMs, setRemainingLockMs] = useState<number>(() => getAutoLockRemainingMs());
   const [newPinInput, setNewPinInput] = useState('');
   const [savingPin, setSavingPin] = useState(false);
 
@@ -132,6 +138,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     checkPersistentStorage().then(setStorageState);
     checkBiometricSupport().then(setBioSupport);
   }, []);
+
+  useEffect(() => {
+    setRemainingLockMs(getAutoLockRemainingMs());
+    if (!pinLockActive || !pinExists || autoLockMinutes <= 0) return;
+    const timer = window.setInterval(() => {
+      setRemainingLockMs(getAutoLockRemainingMs());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [pinLockActive, pinExists, autoLockMinutes]);
 
   const nativeAndroid = hasAndroidNativeAlarms();
 
@@ -214,6 +229,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     const next = !pinLockActive;
     setAppLockEnabled(next);
     setPinLockActive(next);
+    if (next) {
+      recordUserActivity(true);
+      setRemainingLockMs(getAutoLockRemainingMs());
+    }
     onToast(
       next
         ? '4-digit PIN lock enabled after startup animation.'
@@ -231,8 +250,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     setSavingPin(true);
     try {
       await saveAppPin(cleaned);
+      recordUserActivity(true);
       setPinExists(true);
       setPinLockActive(true);
+      setRemainingLockMs(getAutoLockRemainingMs());
       setNewPinInput('');
       onToast('4-digit app PIN updated.');
     } catch (err) {
@@ -506,8 +527,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           <div className="rounded-xl glass-subcard px-3.5 py-2.5 flex items-center justify-between gap-2 text-xs text-[#8b9ab0]">
             <span>
               {nativeAndroid
-                ? 'Android native alarm engine active.'
-                : `Browser permission: ${notifPerm}. Keep app open or installed for PWA reminders.`}
+                ? 'Android native alarm engine active. Alerts silence & auto-snooze while logging a trade.'
+                : `Browser permission: ${notifPerm}. Alerts silence & auto-snooze while logging a trade.`}
             </span>
             {notifPerm === 'granted' && (
               <button
@@ -651,6 +672,83 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 <span>Lock now</span>
               </button>
             </form>
+
+            {pinLockActive && pinExists && (
+              <div className="space-y-3 pt-2 border-t border-white/[0.08]">
+                {/* Subtle Security Active live inactivity indicator */}
+                <div
+                  className="rounded-xl border border-white/[0.08] bg-[#0a1222]/80 px-3.5 py-2.5 space-y-2"
+                  aria-live="off"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <ShieldCheck className="w-4 h-4 text-[#47dca0] shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-[#eef3fb]">Security Active</p>
+                        <p className="text-[11px] text-[#7c8ca6] truncate">
+                          {autoLockMinutes > 0
+                            ? 'Time remaining before auto-lock'
+                            : 'Vault armed for launch & manual lock'}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="font-mono text-xs font-semibold tabular-nums text-[#8df0c0] shrink-0 whitespace-nowrap">
+                      {autoLockMinutes > 0
+                        ? (() => {
+                            const totalSec = Math.ceil(remainingLockMs / 1000);
+                            const mins = Math.floor(totalSec / 60);
+                            const secs = totalSec % 60;
+                            return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+                          })()
+                        : 'Launch only'}
+                    </span>
+                  </div>
+                  {autoLockMinutes > 0 && (
+                    <div className="h-[2px] w-full rounded-full bg-white/[0.07] overflow-hidden">
+                      <div
+                        className="h-full w-full origin-left bg-gradient-to-r from-[#47dca0] to-[#8ebeff] transition-transform duration-500 ease-out"
+                        style={{
+                          transform: `scaleX(${Math.max(
+                            0,
+                            Math.min(1, remainingLockMs / (autoLockMinutes * 60_000))
+                          )})`,
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-[#c9d4e7]">Auto-lock on inactivity</p>
+                    <p className="text-[11px] text-[#7c8ca6]">
+                      Re-locks vault automatically after idle time or switching away
+                    </p>
+                  </div>
+                  <select
+                    value={autoLockMinutes}
+                    onChange={(e) => {
+                      const mins = Number(e.target.value);
+                      setAutoLockMinutes(mins);
+                      setAutoLockTimeoutMinutes(mins);
+                      setRemainingLockMs(getAutoLockRemainingMs());
+                      onToast(
+                        mins === 0
+                          ? 'Inactivity auto-lock set to launch only.'
+                          : `Auto-lock set to ${mins} min${mins === 1 ? '' : 's'} of inactivity.`
+                      );
+                    }}
+                    aria-label="Auto-lock on inactivity"
+                    className="min-h-[38px] rounded-lg glass-input px-2.5 text-xs font-medium text-[#eef3fb] focus:outline-none shrink-0 whitespace-nowrap"
+                  >
+                    <option value={1}>After 1 min</option>
+                    <option value={5}>After 5 mins</option>
+                    <option value={15}>After 15 mins</option>
+                    <option value={0}>Launch only</option>
+                  </select>
+                </div>
+              </div>
+            )}
 
             {/* Fingerprint & Face ID Enrollment */}
             <div className="pt-3.5 border-t border-white/[0.08] space-y-3">

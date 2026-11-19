@@ -156,7 +156,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
                 className="min-h-[44px] inline-flex items-center gap-2 rounded-xl bg-[#47dca0]/15 border border-[#47dca0]/35 px-4 py-2.5 text-sm font-semibold text-[#8df0c0] hover:bg-[#47dca0]/25 transition"
               >
                 <Bot className="w-4 h-4" />
-                <span>Ask MSL AI</span>
+                <span>Ask KAIROS</span>
               </button>
             </div>
           </div>

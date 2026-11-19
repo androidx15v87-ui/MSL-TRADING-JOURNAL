@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useFirebase } from '../context/FirebaseContext';
+import { prewarmAIConnection } from '../lib/aiClient';
 import type { PageId } from '../types/journal';
 import { PWAInstallButton } from './PWAInstallButton';
 
@@ -60,7 +61,7 @@ const PAGE_META: Record<PageId, { label: string; headline: string }> = {
     headline: 'Your rules before the market moves.',
   },
   ai: {
-    label: 'MSL AI',
+    label: 'KAIROS',
     headline: 'Think clearly. Audit your edge.',
   },
   settings: {
@@ -73,7 +74,7 @@ const ALL_NAV_ITEMS: { id: PageId; label: string; shortLabel: string; icon: Reac
   { id: 'dashboard', label: 'Overview', shortLabel: 'Overview', icon: LayoutDashboard },
   { id: 'journal', label: 'Trade journal', shortLabel: 'Journal', icon: ScrollText },
   { id: 'calendar', label: 'Calendar', shortLabel: 'Calendar', icon: CalendarDays },
-  { id: 'ai', label: 'MSL AI', shortLabel: 'MSL AI', icon: Bot },
+  { id: 'ai', label: 'KAIROS', shortLabel: 'KAIROS', icon: Bot },
   { id: 'analytics', label: 'Analytics', shortLabel: 'Analytics', icon: BarChart3 },
   { id: 'models', label: 'Models & fields', shortLabel: 'Models', icon: Layers },
   { id: 'playbook', label: 'Playbook', shortLabel: 'Playbook', icon: BookOpen },
@@ -141,6 +142,8 @@ export const Layout: React.FC<LayoutProps> = ({
                 key={item.id}
                 type="button"
                 onClick={() => handleSelectPage(item.id)}
+                onMouseEnter={item.id === 'ai' ? prewarmAIConnection : undefined}
+                onFocus={item.id === 'ai' ? prewarmAIConnection : undefined}
                 className={`w-full min-h-[44px] flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all whitespace-nowrap ${
                   active
                     ? 'bg-white/[0.09] text-[#8df0c0] border border-white/[0.12] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
@@ -334,6 +337,7 @@ export const Layout: React.FC<LayoutProps> = ({
                 key={tabId}
                 type="button"
                 onClick={() => handleSelectPage(tabId)}
+                onTouchStart={tabId === 'ai' ? prewarmAIConnection : undefined}
                 className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors ${
                   active ? 'text-[#8df0c0]' : 'text-[#7f8fa8] hover:text-[#eef3fb]'
                 }`}

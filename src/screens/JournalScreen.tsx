@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useDeferredValue, useMemo, useState } from 'react';
 import { Download, FileSpreadsheet, ImageIcon, Plus, Search, Tag, X } from 'lucide-react';
 import {
   calculateStats,
@@ -30,6 +30,7 @@ export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
   const [setupFilter, setSetupFilter] = useState<'' | SetupType>('');
   const [sessionFilter, setSessionFilter] = useState<'' | SessionType>('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
   const availableTags = useMemo(() => getAllTradeTags(trades), [trades]);
 
@@ -45,8 +46,8 @@ export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
       }
       return true;
     });
-    return fuzzySearchTrades(base, searchQuery);
-  }, [trades, searchQuery, outcomeFilter, setupFilter, sessionFilter, selectedTags]);
+    return fuzzySearchTrades(base, deferredSearchQuery);
+  }, [trades, deferredSearchQuery, outcomeFilter, setupFilter, sessionFilter, selectedTags]);
 
   const filteredStats = useMemo(() => calculateStats(filteredTrades), [filteredTrades]);
 
@@ -406,7 +407,7 @@ export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
                             onSelectTrade(t);
                           }
                         }}
-                        className="cursor-pointer hover:bg-white/[0.04] focus-visible:bg-white/[0.05] focus-visible:outline-none transition-colors"
+                        className="perf-row cursor-pointer hover:bg-white/[0.04] focus-visible:bg-white/[0.05] focus-visible:outline-none transition-colors"
                       >
                         <td className="py-3.5 px-4 font-mono text-xs text-[#9aa8be] tabular-nums whitespace-nowrap">
                           {formatDate(t.date)}

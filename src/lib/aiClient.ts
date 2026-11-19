@@ -125,31 +125,34 @@ export function buildJournalContext(
 
   const recentTrades = [...state.trades]
     .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, 18)
+    .slice(0, 8)
     .map((t) => {
       const tagsStr = t.tags && t.tags.length > 0 ? t.tags.join(',') : '';
-      return `- ${t.id} | ${t.date} | ${t.pair} ${t.direction} | ${t.setup}/${t.session} | ${t.result} ${formatR(t.r)} (risk ${t.risk}R)${t.model ? ` | model:${t.model}` : ''}${tagsStr ? ` | tags:[${tagsStr}]` : ''}${t.notes ? ` | "${t.notes.slice(0, 120)}"` : ''}`;
+      return `- ${t.id} | ${t.date} | ${t.pair} ${t.direction} | ${t.setup}/${t.session} | ${t.result} ${formatR(t.r)} (risk ${t.risk}R)${t.model ? ` | model:${t.model}` : ''}${tagsStr ? ` | tags:[${tagsStr}]` : ''}${t.notes ? ` | "${t.notes.slice(0, 60)}"` : ''}`;
     });
 
-  const modelsSummary = state.models.map(
-    (m) => `- ${m.name} (${m.type}): Entry="${m.entry || '—'}", Risk="${m.risk || '—'}"`
-  );
+  const modelsSummary = state.models
+    .slice(0, 12)
+    .map(
+      (m) =>
+        `- ${m.name} (${m.type}): Entry="${(m.entry || '—').slice(0, 120)}", Risk="${(m.risk || '—').slice(0, 120)}"`
+    );
 
   const alarmsSummary = state.alarms.map(
     (a) => `- ${a.name}: ${a.time} (${a.enabled ? 'on' : 'off'})`
   );
 
   const playbookLines = [
-    state.playbook.core ? `Core: ${state.playbook.core}` : '',
-    state.playbook.rev ? `Reversal: ${state.playbook.rev}` : '',
-    state.playbook.cont ? `Continuation: ${state.playbook.cont}` : '',
-    state.playbook.entry ? `Entry: ${state.playbook.entry}` : '',
-    state.playbook.risk ? `Risk/Targets: ${state.playbook.risk}` : '',
+    state.playbook.core ? `Core: ${state.playbook.core.slice(0, 160)}` : '',
+    state.playbook.rev ? `Reversal: ${state.playbook.rev.slice(0, 160)}` : '',
+    state.playbook.cont ? `Continuation: ${state.playbook.cont.slice(0, 160)}` : '',
+    state.playbook.entry ? `Entry: ${state.playbook.entry.slice(0, 160)}` : '',
+    state.playbook.risk ? `Risk/Targets: ${state.playbook.risk.slice(0, 160)}` : '',
   ].filter(Boolean);
 
   const memoryLines = (memories || [])
-    .slice(0, 40)
-    .map((m) => `- [${m.id}] (${m.category}) ${m.content}`);
+    .slice(0, 24)
+    .map((m) => `- [${m.id}] (${m.category}) ${m.content.slice(0, 160)}`);
 
   const result = [
     memoryLines.length
@@ -198,7 +201,9 @@ function splitDataUrl(dataUrl: string): { mimeType: string; data: string } | nul
 }
 
 function isTransientStreamError(err: unknown, statusCode?: number): boolean {
-  if (statusCode && (statusCode === 429 || statusCode === 502 || statusCode === 503 || statusCode === 504)) {
+  const errStatus = (err as { status?: number } | null)?.status;
+  const code = statusCode ?? errStatus;
+  if (code && (code === 429 || code === 502 || code === 503 || code === 504)) {
     return true;
   }
   const msg = (err instanceof Error ? err.message : String(err || '')).toLowerCase();
@@ -209,6 +214,10 @@ function isTransientStreamError(err: unknown, statusCode?: number): boolean {
     msg.includes('timed out') ||
     msg.includes('503') ||
     msg.includes('502') ||
+    msg.includes('429') ||
+    msg.includes('busy') ||
+    msg.includes('quota') ||
+    msg.includes('rate limit') ||
     msg.includes('temporarily')
   );
 }
@@ -223,7 +232,6 @@ export async function streamAIChat(options: {
   messages: AIChatMessage[];
   journalContext?: string;
   mode?: 'fast' | 'deep';
-  voiceTurn?: boolean;
   speakSync?: boolean;
   signal?: AbortSignal;
   onStatus?: (status: string) => void;
@@ -234,9 +242,8 @@ export async function streamAIChat(options: {
   onActions?: (actions: AIAppAction[]) => void;
 }): Promise<string> {
   const mode = options.mode || 'fast';
-  const voiceTurn = Boolean(options.voiceTurn);
   const speakSync = Boolean(options.speakSync);
-  const maxClientMsgs = voiceTurn ? 10 : 16;
+  const maxClientMsgs = 16;
   const sourceMessages =
     mode === 'fast' && options.messages.length > maxClientMsgs
       ? [options.messages[0], ...options.messages.slice(-(maxClientMsgs - 1))]
@@ -254,11 +261,10 @@ export async function streamAIChat(options: {
     messages: formattedMessages,
     journalContext: options.journalContext,
     mode,
-    voiceTurn,
     speakSync,
   });
 
-  const maxAttempts = 2;
+  const maxAttempts = 3;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let fullText = '';
@@ -280,9 +286,9 @@ export async function streamAIChat(options: {
         } catch {
           // Ignore parse failure
         }
-        if (attempt === 0 && !options.signal?.aborted && isTransientStreamError(null, response.status)) {
-          options.onStatus?.('Reconnecting to stream…');
-          await new Promise((r) => window.setTimeout(r, 320));
+        if (attempt < maxAttempts - 1 && !options.signal?.aborted && isTransientStreamError(null, response.status)) {
+          options.onStatus?.(attempt === 0 ? 'Switching to optimal route…' : 'Waiting for available lane…');
+          await new Promise((r) => window.setTimeout(r, attempt === 0 ? 350 : 1000));
           continue;
         }
         throw new Error(errMsg);
@@ -306,7 +312,7 @@ export async function streamAIChat(options: {
 
           let event: {
             type?: string;
-            status?: string;
+            status?: string | number;
             text?: string;
             clauseId?: number;
             rawText?: string;
@@ -357,7 +363,11 @@ export async function streamAIChat(options: {
           } else if (event.type === 'done') {
             sawDone = true;
           } else if (event.type === 'error') {
-            throw new Error(event.error || 'AI generation failed.');
+            const streamErr = new Error(event.error || 'AI generation failed.') as Error & { status?: number };
+            if (typeof event.status === 'number') {
+              streamErr.status = event.status;
+            }
+            throw streamErr;
           }
         }
       };
@@ -381,10 +391,10 @@ export async function streamAIChat(options: {
       if (!fullText.trim() && !receivedActions) {
         if (attempt === 0 && !options.signal?.aborted) {
           options.onStatus?.('Retrying stream connection…');
-          await new Promise((r) => window.setTimeout(r, 300));
+          await new Promise((r) => window.setTimeout(r, 200));
           continue;
         }
-        throw new Error('MSL AI returned an empty response. Tap Retry to try again.');
+        throw new Error('KAIROS returned an empty response. Tap Retry to try again.');
       }
 
       if (!sawDone && fullText.trim() && !options.signal?.aborted) {
@@ -410,9 +420,9 @@ export async function streamAIChat(options: {
         throw new StreamInterruptedError(msg, fullText);
       }
 
-      if (attempt === 0 && isTransientStreamError(err)) {
-        options.onStatus?.('Network hiccup — reconnecting…');
-        await new Promise((r) => window.setTimeout(r, 380));
+      if (attempt < maxAttempts - 1 && isTransientStreamError(err)) {
+        options.onStatus?.(attempt === 0 ? 'Reconnecting to optimal lane…' : 'Retrying request…');
+        await new Promise((r) => window.setTimeout(r, attempt === 0 ? 350 : 1000));
         continue;
       }
 
@@ -420,7 +430,7 @@ export async function streamAIChat(options: {
     }
   }
 
-  throw new Error('Unable to reach MSL AI. Please check your connection and tap Retry.');
+  throw new Error('Unable to reach KAIROS. Please check your connection and tap Retry.');
 }
 
 export function cleanTextForSpeech(markdown: string): string {
