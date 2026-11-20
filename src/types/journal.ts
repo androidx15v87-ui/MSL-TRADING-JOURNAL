@@ -159,6 +159,11 @@ export interface AIChatAttachment {
   dataUrl: string;
 }
 
+export interface AISourceCitation {
+  title: string;
+  uri: string;
+}
+
 export type AIAppAction =
   | {
       name: 'navigate_app';
@@ -225,6 +230,21 @@ export type AIAppAction =
       };
     }
   | {
+      name: 'update_playbook_checks';
+      args: {
+        action: 'check' | 'uncheck' | 'reset';
+        query?: string;
+      };
+    }
+  | {
+      name: 'set_journal_units';
+      args: {
+        defaultPnlUnit?: MetricUnit;
+        defaultRiskUnit?: MetricUnit;
+        currency?: string;
+      };
+    }
+  | {
       name: 'update_session_alarm';
       args: { name: string; time?: string; enabled?: boolean };
     }
@@ -263,6 +283,7 @@ export interface AIChatMessage {
   text: string;
   attachments?: AIChatAttachment[];
   actions?: AIAppActionResult[];
+  sources?: AISourceCitation[];
   createdAt: string;
   error?: boolean;
   interrupted?: boolean;

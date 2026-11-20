@@ -45,6 +45,7 @@ interface ChatRequestBody {
   messages: IncomingMessage[];
   journalContext?: string;
   mode?: 'fast' | 'deep';
+  webSearch?: boolean;
   voiceTurn?: boolean;
   speakSync?: boolean;
 }
@@ -208,9 +209,154 @@ const APP_CONTROL_TOOLS: FunctionDeclaration[] = [
       },
     },
   },
+  {
+    name: 'update_playbook_checks',
+    description: 'Check off, uncheck, or reset interactive checklist items on the Trading Playbook.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        action: { type: Type.STRING, description: 'check, uncheck, or reset.' },
+        query: {
+          type: Type.STRING,
+          description: 'Optional keyword or scope (core, rev, cont, entry, risk, or model name) to match criteria.',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'set_journal_units',
+    description: 'Update default P&L unit, Risk unit, or Currency symbol in Journal Settings.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        defaultPnlUnit: { type: Type.STRING, description: 'r, percent, money, or value.' },
+        defaultRiskUnit: { type: Type.STRING, description: 'r, percent, money, or value.' },
+        currency: { type: Type.STRING, description: 'Currency symbol such as $, €, £.' },
+      },
+    },
+  },
 ];
 
 const GEMINI_TOOLS = [{ functionDeclarations: APP_CONTROL_TOOLS }];
+const TOOLS_BY_NAME = new Map<string, FunctionDeclaration>(
+  APP_CONTROL_TOOLS.map((tool) => [tool.name!, tool])
+);
+
+let lastUpstreamWarmAt = 0;
+async function warmUpstreamGemini(): Promise<void> {
+  const now = Date.now();
+  if (now - lastUpstreamWarmAt < 35000) return;
+  lastUpstreamWarmAt = now;
+  try {
+    await fetch('https://generativelanguage.googleapis.com/', {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(1800),
+    });
+  } catch {
+    // Non-blocking TLS/socket pool warm-up only
+  }
+}
+
+function selectToolsForMessages(
+  messages: IncomingMessage[],
+): Array<{ functionDeclarations: FunctionDeclaration[] }> | undefined {
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.text || '';
+  const text = lastUser.trim().toLowerCase();
+  if (!text) return undefined;
+
+  const picked = new Set<string>();
+
+  if (
+    /\b(open|go to|switch|navigate|take me|show me|view|jump to)\b/.test(text) &&
+    /\b(dashboard|overview|journal|calendar|models|analytics|playbook|ai|settings|log trade|modal|screen|tab|page)\b/.test(
+      text
+    )
+  ) {
+    picked.add('navigate_app');
+    picked.add('open_log_trade_modal');
+  } else if (/\bopen log\b|\blog trade modal\b/.test(text)) {
+    picked.add('open_log_trade_modal');
+  }
+
+  if (
+    /\b(log|record|enter|add|save|edit|update|modify|fix|change|delete|remove)\b/.test(text) &&
+    /\b(trade|trades|position|entry|win|loss|be|missed|eurusd|xauusd|gbpusd|usdjpy|nas|nq|es|btc|eth|pair|r\b|\$|%)\b/.test(
+      text
+    )
+  ) {
+    picked.add('log_trade');
+    picked.add('update_trade');
+    picked.add('delete_trade');
+    picked.add('open_log_trade_modal');
+  }
+
+  if (
+    /\b(model|template|playbook|alarm|alert|reminder|quote|motivation)\b/.test(text) &&
+    /\b(create|add|save|update|edit|change|set|enable|disable|turn|cycle|next|refresh|new)\b/.test(
+      text
+    )
+  ) {
+    picked.add('create_trading_model');
+    picked.add('update_playbook');
+    picked.add('update_session_alarm');
+    picked.add('cycle_motivational_quote');
+  }
+
+  if (
+    /\b(remember|memorize|don't forget|never forget|save.*memory|keep in mind|note that|my preference|always respond|always call|from now on|forget|remove memory|delete memory)\b/.test(
+      text
+    )
+  ) {
+    picked.add('save_memory');
+    picked.add('forget_memory');
+  }
+
+  if (/\b(check off|tick off|uncheck|reset checklist|checklist|criteria)\b/.test(text)) {
+    picked.add('update_playbook_checks');
+  }
+
+  if (
+    /\b(unit|units|currency|dollar|dollars|euro|pound|percent|percentage|r-multiple|r multiple|switch to \$|switch to %)\b/.test(
+      text
+    )
+  ) {
+    picked.add('set_journal_units');
+  }
+
+  // Handle brief multi-turn action confirmations like "yes", "do it", "apply that"
+  if (
+    picked.size === 0 &&
+    messages.length >= 2 &&
+    text.length <= 40 &&
+    /\b(yes|yeah|yep|sure|ok|okay|do it|go ahead|apply|confirm|save it|log it)\b/.test(text)
+  ) {
+    return GEMINI_TOOLS;
+  }
+
+  if (picked.size === 0) return undefined;
+  const declarations = Array.from(picked)
+    .map((name) => TOOLS_BY_NAME.get(name))
+    .filter((d): d is FunctionDeclaration => Boolean(d));
+  return declarations.length > 0 ? [{ functionDeclarations: declarations }] : undefined;
+}
+
+function shouldUseWebSearch(messages: IncomingMessage[], explicitWebSearch?: boolean): boolean {
+  if (explicitWebSearch) return true;
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.text || '';
+  const text = lastUser.trim().toLowerCase();
+  if (!text) return false;
+  const asksRealtimeWeb =
+    /\b(today|latest|current|now|this week|news|headline|cpi|nfp|fomc|fed|ecb|boe|boj|rate decision|yield|dxy|spot price|live price|search|look up|online|web|forecast|economic calendar|tomorrow)\b/.test(
+      text
+    );
+  if (!asksRealtimeWeb) return false;
+  const purePersonalJournalQuery =
+    /\b(my trades|my journal|my win rate|my pnl|log a trade|log this trade|open analytics|open journal)\b/.test(
+      text
+    ) && !/\b(news|cpi|nfp|fomc|fed|ecb|boe|boj|headline|calendar|search|web|online|spot price|live price)\b/.test(text);
+  return !purePersonalJournalQuery;
+}
 
 function getAiClient(apiVersion?: 'v1alpha'): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -245,17 +391,32 @@ function getAiClient(apiVersion?: 'v1alpha'): GoogleGenAI | null {
   return cachedDefaultAiClient;
 }
 
-function buildSystemInstruction(journalContext?: string): string {
+function buildSystemInstruction(
+  journalContext?: string,
+  options?: { isDeep?: boolean; hasTools?: boolean; hasWebSearch?: boolean }
+): string {
+  const isDeep = Boolean(options?.isDeep);
+  const hasTools = Boolean(options?.hasTools);
+  const hasWebSearch = Boolean(options?.hasWebSearch);
   return [
-    `You are KAIROS — a sharp, high-velocity intelligence for markets, quantitative trading analysis, probability, coding, general knowledge, and direct MSL Journal control.`,
-    '- Adapt depth to the prompt: crisp 1–3 sentences for quick asks; structured Markdown/tables/code for analytical audits or deep dives.',
-    '- Ground all trade IDs, PnL, units (R, %, money, value), missed trades, win rate, setups, and notes strictly in the Live Journal Snapshot. Missed trades are excluded from realized portfolio totals.',
-    '- On charts: read Structure & Bias, Liquidity/POI, Entry/Invalidation, and R:R Verdict.',
-    '- Respect `Saved User Memories`. Use `save_memory` / `forget_memory` for lasting preferences/rules. Call app tools only when requested.',
+    `You are KAIROS — flagship quantitative trading analyst & multi-domain intelligence for MSL Journal.`,
+    isDeep
+      ? '- Lead immediately with the highest-leverage verdict in sentence 1 (zero preamble), then deliver crisp, institutional-grade quantitative breakdowns, tables, edge/leak diagnostics, or clean code.'
+      : '- Lead immediately with the direct answer in the very first words—zero filler, zero throat-clearing. Keep replies ultra-crisp (1–4 tight sentences or compact bullets) unless detail/code/audit is requested.',
+    '- Ground all trade IDs, PnL, units (R, %, money, value), missed trades, win rate, Pair/Model/Direction edge, Post-Loss Tilt, Weekday bias, and Matched Trades strictly in the Snapshot (Missed trades are excluded from realized PnL).',
+    '- On charts: deliver Market Structure & Bias, Key Liquidity / POI Levels, Invalidation, and Asymmetric R:R Verdict concisely.',
+    hasWebSearch
+      ? '- Live web grounding is active: use fresh verified data for macro catalysts, rates, headlines, and market structure without inventing numbers.'
+      : '',
+    hasTools
+      ? '- Call app tools only when requested, and include your brief confirmation text in the same turn.'
+      : '',
     journalContext
       ? `--- SNAPSHOT ---\n${journalContext}\n--- END ---`
-      : 'No live journal snapshot attached.',
-  ].join('\n');
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 const modelCooldownUntil = new Map<string, number>();
@@ -417,6 +578,12 @@ function summarizeActionFallback(calls: FunctionCall[]): string {
           return `Saved memory: "${String(args.content || '').slice(0, 80)}"`;
         case 'forget_memory':
           return 'Removed memory item';
+        case 'update_playbook_checks':
+          return args.action === 'reset'
+            ? 'Reset playbook checklist items'
+            : `${args.action === 'uncheck' ? 'Unchecked' : 'Checked off'} playbook checklist items`;
+        case 'set_journal_units':
+          return 'Updated journal metric units';
         default:
           return `Executed ${c.name}`;
       }
@@ -754,6 +921,10 @@ function handleLiveTranscribeConnection(clientWs: WebSocket): void {
 
 async function startServer() {
   const app = express();
+  app.use((_req, res, next) => {
+    res.setHeader('Permissions-Policy', 'microphone=(self)');
+    next();
+  });
   const httpServer = http.createServer(app);
   httpServer.keepAliveTimeout = 65000;
   httpServer.headersTimeout = 66000;
@@ -771,7 +942,10 @@ async function startServer() {
   app.use('/api/ai/transcribe', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '8mb' }));
   app.use(express.json({ limit: '16mb' }));
 
-  app.get('/api/health', (_req, res) => {
+  app.get('/api/health', (req, res) => {
+    if (req.query.warm === '1') {
+      void warmUpstreamGemini();
+    }
     res.json({
       ok: true,
       version: APP_VERSION,
@@ -800,17 +974,36 @@ async function startServer() {
 
     const isDeep = body?.mode === 'deep';
     const speakSync = Boolean(body?.speakSync);
-    const systemInstruction = buildSystemInstruction(body?.journalContext);
+    const activeTools = selectToolsForMessages(messages);
+    const hasTools = Boolean(activeTools);
+    const useWebSearch = shouldUseWebSearch(messages, body?.webSearch);
+    const combinedTools: Array<{ googleSearch?: Record<string, never>; functionDeclarations?: FunctionDeclaration[] }> | undefined =
+      useWebSearch || activeTools
+        ? [
+            ...(useWebSearch ? [{ googleSearch: {} }] : []),
+            ...(activeTools || []),
+          ]
+        : undefined;
+    const useHybridToolConfig = Boolean(useWebSearch && activeTools);
+    const systemInstruction = buildSystemInstruction(body?.journalContext, {
+      isDeep,
+      hasTools,
+      hasWebSearch: useWebSearch,
+    });
     const compactSystemInstruction = buildSystemInstruction(
-      body?.journalContext ? body.journalContext.slice(0, 1200) : undefined
+      body?.journalContext ? body.journalContext.slice(0, 1100) : undefined,
+      { isDeep: false, hasTools, hasWebSearch: useWebSearch }
     );
 
-    const buildContents = (msgList: IncomingMessage[], maxMsgs: number, keepImagesLastN: number): Content[] => {
-      const sliced =
-        msgList.length > maxMsgs
-          ? [msgList[0], ...msgList.slice(-(maxMsgs - 1))]
-          : msgList;
+    const buildContents = (
+      msgList: IncomingMessage[],
+      maxMsgs: number,
+      keepImagesLastN: number,
+      maxOlderTextChars: number
+    ): Content[] => {
+      const sliced = msgList.length > maxMsgs ? msgList.slice(-maxMsgs) : msgList;
       const imgCutoffIdx = Math.max(0, sliced.length - keepImagesLastN);
+      const olderTextCutoffIdx = Math.max(0, sliced.length - 2);
       return sliced.map((msg, idx) => {
         const parts: Part[] = [];
         if (idx >= imgCutoffIdx && Array.isArray(msg.images)) {
@@ -826,7 +1019,11 @@ async function startServer() {
           }
         }
         if (msg.text && msg.text.trim().length > 0) {
-          parts.push({ text: msg.text });
+          const textVal =
+            idx < olderTextCutoffIdx && msg.text.length > maxOlderTextChars
+              ? `${msg.text.slice(0, maxOlderTextChars)}…`
+              : msg.text;
+          parts.push({ text: textVal });
         } else if (parts.length === 0) {
           parts.push({ text: ' ' });
         }
@@ -837,8 +1034,16 @@ async function startServer() {
       });
     };
 
-    const contents: Content[] = buildContents(messages, isDeep ? 12 : 8, isDeep ? 2 : 1);
-    const compactContents: Content[] = buildContents(messages, 4, 1);
+    const contents: Content[] = buildContents(
+      messages,
+      isDeep ? 10 : 6,
+      isDeep ? 2 : 1,
+      isDeep ? 1800 : 900
+    );
+    const compactContents: Content[] = buildContents(messages, 4, 1, 600);
+    const hasRecentImages = contents.some((c) =>
+      c.parts?.some((p) => Boolean((p as { inlineData?: unknown }).inlineData))
+    );
 
     res.socket?.setNoDelay(true);
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -969,21 +1174,39 @@ async function startServer() {
 
     const baseCandidates: Array<{ model: string; level: ThinkingLevel; timeoutMs: number }> = isDeep
       ? [
-          { model: FAST_MODEL_NAME, level: ThinkingLevel.MEDIUM, timeoutMs: 8000 },
-          { model: HYDROGEN_MODEL_NAME, level: ThinkingLevel.MEDIUM, timeoutMs: 8500 },
+          {
+            model: HYDROGEN_MODEL_NAME,
+            level: ThinkingLevel.MEDIUM,
+            timeoutMs: hasRecentImages ? 8500 : 5200,
+          },
+          {
+            model: FAST_MODEL_NAME,
+            level: ThinkingLevel.LOW,
+            timeoutMs: hasRecentImages ? 7500 : 4200,
+          },
         ]
       : [
-          { model: FAST_MODEL_NAME, level: ThinkingLevel.MINIMAL, timeoutMs: 4800 },
-          { model: HYDROGEN_MODEL_NAME, level: ThinkingLevel.LOW, timeoutMs: 6500 },
+          {
+            model: FAST_MODEL_NAME,
+            level: ThinkingLevel.MINIMAL,
+            timeoutMs: hasRecentImages ? 5500 : 2600,
+          },
+          {
+            model: HYDROGEN_MODEL_NAME,
+            level: ThinkingLevel.LOW,
+            timeoutMs: hasRecentImages ? 7000 : 4500,
+          },
         ];
 
-    const retryBackoffs = [0, 180, 550];
+    const retryBackoffs = [0, 60, 180];
 
     try {
       let activeModel = baseCandidates[0].model;
       let streamedText = '';
       const collectedCalls: FunctionCall[] = [];
+      const collectedSources = new Map<string, { title: string; uri: string }>();
       const modelTurnParts: Part[] = [];
+      let emittedActionsImmediately = false;
       let succeeded = false;
       let lastErr: unknown = null;
 
@@ -992,10 +1215,10 @@ async function startServer() {
 
         if (pass > 0) {
           const parsedDelay = parseRetryDelayMs(lastErr);
-          const waitMs = Math.min(3200, (parsedDelay || retryBackoffs[pass]) + Math.floor(Math.random() * 260));
+          const waitMs = Math.min(2000, (parsedDelay || retryBackoffs[pass]) + Math.floor(Math.random() * 90));
           sendEvent({
             type: 'status',
-            status: pass === 1 ? 'Switching to optimal model lane…' : 'Completing connection…',
+            status: pass === 1 ? 'Switching to fastest lane…' : 'Connecting…',
           });
           await sleepMs(waitMs);
           if (res.writableEnded || clientClosed) break;
@@ -1022,7 +1245,10 @@ async function startServer() {
                   thinkingConfig: {
                     thinkingLevel: pass >= 2 ? ThinkingLevel.LOW : candidate.level,
                   },
-                  tools: GEMINI_TOOLS,
+                  ...(combinedTools ? { tools: combinedTools } : {}),
+                  ...(useHybridToolConfig
+                    ? { toolConfig: { includeServerSideToolInvocations: true } }
+                    : {}),
                 },
               }),
               candidate.timeoutMs,
@@ -1034,7 +1260,7 @@ async function startServer() {
               if (res.writableEnded || clientClosed) break;
               const nextResult = await withTimeout(
                 iterator.next(),
-                candidateStreamed || candidateCalls.length > 0 ? 15000 : candidate.timeoutMs,
+                candidateStreamed || candidateCalls.length > 0 ? 12000 : candidate.timeoutMs,
                 `${candidate.model} chunk`
               );
               if (nextResult.done) break;
@@ -1047,6 +1273,22 @@ async function startServer() {
                 pushDelta(text);
               }
 
+              const gChunks = chunk.candidates?.[0]?.groundingMetadata?.groundingChunks;
+              if (Array.isArray(gChunks)) {
+                for (const gChunk of gChunks) {
+                  const uri = gChunk?.web?.uri;
+                  if (typeof uri === 'string' && uri && !collectedSources.has(uri)) {
+                    collectedSources.set(uri, {
+                      uri,
+                      title:
+                        typeof gChunk?.web?.title === 'string' && gChunk.web.title.trim()
+                          ? gChunk.web.title.trim()
+                          : uri.replace(/^https?:\/\/(?:www\.)?/, '').split('/')[0] || 'Source',
+                    });
+                  }
+                }
+              }
+
               const parts = chunk.candidates?.[0]?.content?.parts;
               if (Array.isArray(parts)) {
                 for (const part of parts) {
@@ -1055,10 +1297,22 @@ async function startServer() {
               }
 
               if (Array.isArray(chunk.functionCalls) && chunk.functionCalls.length > 0) {
+                const freshCalls: FunctionCall[] = [];
                 for (const fc of chunk.functionCalls) {
                   if (fc?.name) {
                     candidateCalls.push(fc);
+                    freshCalls.push(fc);
                   }
+                }
+                if (freshCalls.length > 0 && !res.writableEnded && !clientClosed) {
+                  emittedActionsImmediately = true;
+                  sendEvent({
+                    type: 'actions',
+                    actions: freshCalls.map((fc) => ({
+                      name: fc.name,
+                      args: fc.args || {},
+                    })),
+                  });
                 }
               }
             }
@@ -1096,13 +1350,15 @@ async function startServer() {
       }
 
       if (collectedCalls.length > 0 && !res.writableEnded && !clientClosed) {
-        sendEvent({
-          type: 'actions',
-          actions: collectedCalls.map((fc) => ({
-            name: fc.name,
-            args: fc.args || {},
-          })),
-        });
+        if (!emittedActionsImmediately) {
+          sendEvent({
+            type: 'actions',
+            actions: collectedCalls.map((fc) => ({
+              name: fc.name,
+              args: fc.args || {},
+            })),
+          });
+        }
 
         if (!streamedText.trim()) {
           const instantConfirmActions = new Set([
@@ -1117,6 +1373,8 @@ async function startServer() {
             'create_trading_model',
             'update_playbook',
             'update_session_alarm',
+            'update_playbook_checks',
+            'set_journal_units',
           ]);
           const lastUserText = (messages[messages.length - 1]?.text || '').trim().toLowerCase();
           const hasAnalyticalAsk =
@@ -1126,7 +1384,6 @@ async function startServer() {
             );
           const isInstantActionOnly =
             collectedCalls.every((fc) => instantConfirmActions.has(fc.name || '')) &&
-            lastUserText.length <= 140 &&
             !hasAnalyticalAsk;
 
           if (isInstantActionOnly) {
@@ -1142,7 +1399,7 @@ async function startServer() {
               }));
 
               const turn2Contents: Content[] = [
-                ...contents,
+                ...contents.slice(-2),
                 {
                   role: 'model',
                   parts:
@@ -1159,27 +1416,18 @@ async function startServer() {
               const turn2Level =
                 activeModel === HYDROGEN_MODEL_NAME ? ThinkingLevel.LOW : ThinkingLevel.MINIMAL;
 
-              const turn2Config: {
-                systemInstruction: string;
-                maxOutputTokens?: number;
-                thinkingConfig: { thinkingLevel: ThinkingLevel };
-              } = {
-                systemInstruction,
-                thinkingConfig: {
-                  thinkingLevel: turn2Level,
-                },
-              };
-              if (activeModel !== HYDROGEN_MODEL_NAME) {
-                turn2Config.maxOutputTokens = 420;
-              }
-
               const stream2 = await withTimeout(
                 ai.models.generateContentStream({
                   model: activeModel,
                   contents: turn2Contents,
-                  config: turn2Config,
+                  config: {
+                    systemInstruction: compactSystemInstruction,
+                    thinkingConfig: {
+                      thinkingLevel: turn2Level,
+                    },
+                  },
                 }),
-                6000,
+                4200,
                 `${activeModel} turn2`
               );
 
@@ -1208,6 +1456,13 @@ async function startServer() {
       if (speakSync && !res.writableEnded && !clientClosed) {
         flushSyncBuffer();
         await syncEmitChain;
+      }
+
+      if (collectedSources.size > 0 && !res.writableEnded && !clientClosed) {
+        sendEvent({
+          type: 'sources',
+          sources: Array.from(collectedSources.values()).slice(0, 6),
+        });
       }
 
       if (!res.writableEnded && !clientClosed) {
@@ -1703,6 +1958,7 @@ async function startServer() {
 
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`MSL Journal server listening on http://0.0.0.0:${PORT}`);
+    void warmUpstreamGemini();
   });
 }
 

@@ -69,6 +69,38 @@ function isEmbeddedIframe(): boolean {
   }
 }
 
+function isTouchEnvironment(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return navigator.maxTouchPoints > 0 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+async function acquireAudioStream(): Promise<MediaStream> {
+  const mediaDevices = navigator.mediaDevices;
+  try {
+    return await mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  } catch (err) {
+    const name = err instanceof Error ? err.name : '';
+    // Retry immediately with unconstrained audio if hardware rejected speech DSP constraints
+    if (
+      name === 'OverconstrainedError' ||
+      name === 'ConstraintNotSatisfiedError' ||
+      name === 'NotReadableError' ||
+      name === 'AbortError' ||
+      name === 'TypeError'
+    ) {
+      return await mediaDevices.getUserMedia({ audio: true });
+    }
+    throw err;
+  }
+}
+
 function downsampleTo16kInt16(input: Float32Array, sourceRate: number): Int16Array {
   if (!input.length) return new Int16Array(0);
   if (sourceRate <= TARGET_SAMPLE_RATE) {
@@ -201,6 +233,7 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
   const [isProcessing, setIsProcessing] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [micBlockedField, setMicBlockedField] = useState<string | null>(null);
   const [audioLevel, setAudioLevel] = useState(0);
   const [audioBands, setAudioBands] = useState<number[]>(EMPTY_BANDS);
 
@@ -242,6 +275,11 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
   const reportError = useCallback((message: string) => {
     setError(message);
     onErrorRef.current?.(message);
+  }, []);
+
+  const dismissMicFallback = useCallback(() => {
+    setMicBlockedField(null);
+    setError(null);
   }, []);
 
   const stopTimer = useCallback(() => {
@@ -677,29 +715,29 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
       usingLiveWsRef.current = false;
 
       setError(null);
+      setMicBlockedField(null);
       updateInterim('');
       activeFieldRef.current = field;
       setActiveField(field);
       setStatus('connecting');
       setIsProcessing(false);
 
+      // Release any dangling audio tracks synchronously without delaying user-gesture getUserMedia call
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
+
       if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
         activeFieldRef.current = null;
         setActiveField(null);
         setStatus('idle');
-        reportError('Microphone capture is not supported in this browser.');
+        setMicBlockedField(field);
         return;
       }
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
+        const stream = await acquireAudioStream();
 
         if (sessionTokenRef.current !== token || cancelRequestedRef.current) {
           stream.getTracks().forEach((t) => t.stop());
@@ -770,7 +808,8 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
           }
         }
 
-        const preferLiveWsFirst = isEmbeddedIframe() || !getSpeechRecognitionCtor();
+        const preferLiveWsFirst =
+          isEmbeddedIframe() || isTouchEnvironment() || !getSpeechRecognitionCtor();
 
         processor.onaudioprocess = (evt) => {
           if (sessionTokenRef.current !== token || cancelRequestedRef.current) return;
@@ -879,13 +918,10 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
             const code = evt?.error || '';
             if (code === 'aborted') return;
 
-            if (code === 'not-allowed' || code === 'service-not-allowed') {
-              reportError('Microphone permission denied. Please allow mic access.');
-              stop(true);
-              return;
-            }
-
-            // On network/no-speech/audio-capture failure in Web Speech, hot-swap straight to Gemini Live WS
+            // getUserMedia already succeeded and owns the live microphone stream.
+            // Never abort capture or show a false permission error if browser SpeechRecognition
+            // emits 'not-allowed', 'service-not-allowed', 'audio-capture', or 'network'—
+            // hot-swap seamlessly to Gemini Live WS + WAV fallback instead.
             recognitionRef.current = null;
             connectLiveWs(token, field);
           };
@@ -932,28 +968,63 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
           recognitionRef.current = null;
           connectLiveWs(token, field);
         }
-      } catch (err) {
+      } catch {
         if (sessionTokenRef.current !== token) return;
         activeFieldRef.current = null;
         setActiveField(null);
         setStatus('idle');
         releaseAudioResources();
-        const message =
-          err instanceof Error && /permission|notallowed/i.test(err.message)
-            ? 'Microphone permission denied. Allow mic access in browser settings.'
-            : 'Unable to access microphone. Check your audio input device.';
-        reportError(message);
+        // Present an instant native audio clip recorder/uploader fallback instead of a permission-denied error loop
+        setMicBlockedField(field);
       }
     },
     [
       connectLiveWs,
       releaseAudioResources,
-      reportError,
       startMeterLoop,
       startTimer,
-      stop,
       updateInterim,
     ],
+  );
+
+  const transcribeAudioFile = useCallback(
+    async (field: string, file: File) => {
+      if (!file) return;
+      setMicBlockedField(null);
+      setError(null);
+      activeFieldRef.current = field;
+      setActiveField(field);
+      setStatus('processing');
+      setIsProcessing(true);
+
+      try {
+        const audioBase64 = await blobToBase64(file);
+        const mimeType = (file.type || 'audio/mp4').split(';')[0];
+        const res = await fetch('/api/ai/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audioBase64, mimeType }),
+        });
+        const data = (await res.json()) as { text?: string; error?: string };
+        if (!res.ok) {
+          throw new Error(data.error || `Transcription failed (${res.status})`);
+        }
+        const transcript = (data.text || '').trim();
+        if (transcript) {
+          onFinalTextRef.current(field, transcript);
+        } else {
+          reportError('No clear speech detected in that audio clip.');
+        }
+      } catch (err) {
+        reportError(err instanceof Error ? err.message : 'Could not transcribe audio clip.');
+      } finally {
+        activeFieldRef.current = null;
+        setActiveField(null);
+        setIsProcessing(false);
+        setStatus('idle');
+      }
+    },
+    [reportError],
   );
 
   const toggleField = useCallback(
@@ -992,9 +1063,12 @@ export function useVoiceDictation({ onFinalText, onError }: UseVoiceDictationOpt
     isProcessing,
     elapsedSeconds,
     error,
+    micBlockedField,
     audioLevel,
     audioBands,
     toggleField,
+    transcribeAudioFile,
+    dismissMicFallback,
     stop,
     cancel,
   };

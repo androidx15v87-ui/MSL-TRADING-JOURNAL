@@ -292,8 +292,8 @@ export default function App() {
 
   useEffect(() => {
     if (!hydrated) return;
-    // Warm up /api/health connection & lazy screen chunks during splash so interactions hit warm connections
-    void fetch('/api/health').catch(() => {});
+    // Warm up /api/health + upstream Gemini TLS connection & lazy screen chunks during splash
+    void fetch('/api/health?warm=1', { keepalive: true }).catch(() => {});
     const timer = window.setTimeout(() => {
       void import('./screens/JournalScreen');
       void import('./screens/CalendarScreen');
@@ -1073,6 +1073,120 @@ export default function App() {
                 ok: true,
               });
             }
+          } else if (action.name === 'update_playbook_checks') {
+            const mode = action.args?.action === 'reset' || action.args?.action === 'uncheck'
+              ? action.args.action
+              : 'check';
+            const query = String(action.args?.query || '').trim().toLowerCase();
+            const stripChecklistLine = (line: string) =>
+              line
+                .replace(/^\s*[-*•]+\s*/, '')
+                .replace(/^\s*\[[ xX]?\]\s*/, '')
+                .replace(/^\s*\d+[.)]\s+/, '')
+                .trim();
+            const makeId = (scope: string, itemText: string, index: number) => {
+              const slug = itemText
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+                .slice(0, 64);
+              return `${scope}::${slug || 'item'}::${index}`;
+            };
+
+            const currentState = stateRef.current;
+            const prevChecks = { ...(currentState.playbookChecks || {}) };
+            let touched = 0;
+
+            if (mode === 'reset' && !query) {
+              touched = Object.keys(prevChecks).length;
+              setState((prev) => ({ ...prev, playbookChecks: {} }));
+              void savePlaybookChecks({}, activeUser?.uid);
+              results.push({
+                name: action.name,
+                label: 'Reset all playbook checks',
+                ok: true,
+              });
+              showToast('KAIROS: Playbook checklist reset.');
+            } else {
+              const sectionPairs: Array<{ scope: string; label: string; raw: string }> = [
+                { scope: 'pb-core', label: 'core narrative', raw: currentState.playbook.core },
+                { scope: 'pb-rev', label: 'reversal', raw: currentState.playbook.rev },
+                { scope: 'pb-cont', label: 'continuation', raw: currentState.playbook.cont },
+                { scope: 'pb-entry', label: 'entry criteria', raw: currentState.playbook.entry },
+                { scope: 'pb-risk', label: 'risk rules', raw: currentState.playbook.risk },
+                ...currentState.models.flatMap((m) => [
+                  { scope: `model-${m.id}-entry`, label: `${m.name} entry`, raw: m.entry },
+                  { scope: `model-${m.id}-risk`, label: `${m.name} risk`, raw: m.risk },
+                ]),
+              ];
+
+              for (const sec of sectionPairs) {
+                const lines = (sec.raw || '')
+                  .split(/\r?\n/)
+                  .map(stripChecklistLine)
+                  .filter(Boolean);
+                lines.forEach((itemText, idx) => {
+                  const id = makeId(sec.scope, itemText, idx);
+                  const matches =
+                    !query ||
+                    itemText.toLowerCase().includes(query) ||
+                    sec.label.toLowerCase().includes(query) ||
+                    sec.scope.toLowerCase().includes(query);
+                  if (!matches) return;
+                  if (mode === 'check') {
+                    if (!prevChecks[id]) {
+                      prevChecks[id] = true;
+                      touched += 1;
+                    }
+                  } else {
+                    if (prevChecks[id]) {
+                      delete prevChecks[id];
+                      touched += 1;
+                    }
+                  }
+                });
+              }
+
+              setState((prev) => ({ ...prev, playbookChecks: prevChecks }));
+              void savePlaybookChecks(prevChecks, activeUser?.uid);
+              const label =
+                mode === 'check'
+                  ? `Checked off ${touched} playbook criterion${touched === 1 ? '' : 'a'}`
+                  : `Unchecked ${touched} playbook criterion${touched === 1 ? '' : 'a'}`;
+              results.push({ name: action.name, label, ok: true });
+              showToast(`KAIROS: ${label}.`);
+            }
+          } else if (action.name === 'set_journal_units') {
+            const cur = stateRef.current.settings;
+            const nextSettings: JournalSettings = {
+              ...cur,
+              defaultPnlUnit: action.args?.defaultPnlUnit
+                ? normalizeMetricUnit(action.args.defaultPnlUnit, cur.defaultPnlUnit || 'r')
+                : cur.defaultPnlUnit,
+              defaultRiskUnit: action.args?.defaultRiskUnit
+                ? normalizeMetricUnit(action.args.defaultRiskUnit, cur.defaultRiskUnit || 'r')
+                : cur.defaultRiskUnit,
+              currency:
+                typeof action.args?.currency === 'string' && action.args.currency.trim()
+                  ? action.args.currency.trim().slice(0, 8)
+                  : cur.currency,
+            };
+            await saveKV('settings', nextSettings);
+            setState((prev) => ({ ...prev, settings: nextSettings }));
+            if (activeUser) {
+              await cloudSaveAlarmsAndSettings(
+                activeUser.uid,
+                stateRef.current.alarms,
+                nextSettings
+              ).catch(() => {});
+            }
+            const unitSummary = `P&L: ${getUnitShortLabel(nextSettings.defaultPnlUnit, nextSettings.currency)} · Risk: ${getUnitShortLabel(nextSettings.defaultRiskUnit, nextSettings.currency)}`;
+            results.push({
+              name: action.name,
+              label: `Updated units (${unitSummary})`,
+              ok: true,
+            });
+            showToast(`KAIROS: Units set (${unitSummary}).`);
           }
         } catch {
           results.push({

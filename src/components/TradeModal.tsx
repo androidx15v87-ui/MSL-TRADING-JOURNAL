@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Calculator, ChevronDown, ImagePlus, Loader2, Mic, Plus, Square, Tag, Trash2, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useVoiceDictation } from '../hooks/useVoiceDictation';
@@ -140,14 +140,19 @@ export const TradeModal: React.FC<TradeModalProps> = ({
     [addTagsFromString]
   );
 
+  const audioClipInputRef = useRef<HTMLInputElement | null>(null);
+
   const {
     activeField,
     interimText,
     isListening,
     isTranscribing,
     elapsedSeconds,
+    micBlockedField,
     audioBands,
     toggleField,
+    transcribeAudioFile,
+    dismissMicFallback,
     stop: stopDictation,
     cancel: cancelDictation,
   } = useVoiceDictation({
@@ -158,6 +163,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
   useEffect(() => {
     if (!open) {
       stopDictation(true);
+      dismissMicFallback();
       return;
     }
     const defaultPnlUnit = settings?.defaultPnlUnit || 'r';
@@ -223,7 +229,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
       setCustom({});
       setImages([]);
     }
-  }, [open, trade, draftTemplate, initialDate, settings, stopDictation]);
+  }, [open, trade, draftTemplate, initialDate, settings, stopDictation, dismissMicFallback]);
 
   const suggestedTags = useMemo(() => {
     const seen = new Set<string>();
@@ -449,6 +455,21 @@ export const TradeModal: React.FC<TradeModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          <input
+            ref={audioClipInputRef}
+            type="file"
+            accept="audio/*"
+            capture="user"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (file) {
+                void transcribeAudioFile(micBlockedField || 'notes', file);
+              }
+            }}
+            className="hidden"
+          />
+
           {activeField && (
             <div className="rounded-xl bg-[#47dca0]/10 border border-[#47dca0]/35 px-3.5 py-2.5 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -488,6 +509,43 @@ export const TradeModal: React.FC<TradeModalProps> = ({
                   className="min-h-[36px] rounded-lg bg-[#47dca0] px-3 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] transition"
                 >
                   Done
+                </button>
+              </div>
+            </div>
+          )}
+
+          {micBlockedField && !activeField && (
+            <div className="rounded-xl glass-subcard border border-[#8ebeff]/35 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <Mic className="w-4 h-4 text-[#8ebeff] shrink-0" />
+                <span className="text-xs text-[#dce6f5]">
+                  Live browser mic is unavailable here — record or upload an audio clip for{' '}
+                  <strong className="font-semibold text-[#eef3fb]">{micBlockedField}</strong>.
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 ml-auto shrink-0">
+                <button
+                  type="button"
+                  onClick={() => void toggleField(micBlockedField)}
+                  className="min-h-[34px] rounded-lg glass-subcard px-2.5 py-1 text-xs font-medium text-[#cfe0f8] hover:text-[#eef3fb] transition"
+                >
+                  Try live mic
+                </button>
+                <button
+                  type="button"
+                  onClick={() => audioClipInputRef.current?.click()}
+                  className="min-h-[34px] inline-flex items-center gap-1.5 rounded-lg bg-[#47dca0] px-3 py-1 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] transition"
+                >
+                  <Mic className="w-3.5 h-3.5" />
+                  <span>Record / upload clip</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissMicFallback}
+                  aria-label="Dismiss voice note options"
+                  className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-lg text-[#8b9ab0] hover:text-[#eef3fb] transition"
+                >
+                  <X className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>

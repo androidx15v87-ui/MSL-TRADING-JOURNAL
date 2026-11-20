@@ -283,7 +283,26 @@ const MemoMarkdownBlock = React.memo<{ text: string }>(({ text }) => {
 MemoMarkdownBlock.displayName = 'MemoMarkdownBlock';
 
 export const MarkdownRenderer: React.FC<{ content: string }> = React.memo(({ content }) => {
-  const blockTexts = React.useMemo(() => splitMarkdownBlocks(content), [content]);
+  const isPlainSingleLine =
+    !content.includes('\n') &&
+    !content.includes('*') &&
+    !content.includes('`') &&
+    !content.includes('#') &&
+    !content.includes('|') &&
+    !content.startsWith('>');
+
+  const blockTexts = React.useMemo(
+    () => (isPlainSingleLine ? [] : splitMarkdownBlocks(content)),
+    [content, isPlainSingleLine]
+  );
+
+  if (isPlainSingleLine) {
+    return (
+      <div className="space-y-0.5">
+        <p className="my-1.5 text-sm leading-relaxed text-[#d7e1f0]">{content}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-0.5">

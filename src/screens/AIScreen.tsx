@@ -8,6 +8,8 @@ import {
   CheckCircle2,
   Code,
   Copy,
+  ExternalLink,
+  Globe,
   History,
   ImagePlus,
   Loader2,
@@ -19,6 +21,7 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  Search,
   Send,
   Sparkles,
   Square,
@@ -36,6 +39,7 @@ import {
   StreamingVoiceEngine,
   buildJournalContext,
   extractSpeakableClauses,
+  generateFollowUpChips,
   loadAIConversations,
   loadVoiceRate,
   prewarmAIConnection,
@@ -53,6 +57,7 @@ import type {
   AIConversation,
   AIMemoryCategory,
   AIMemoryItem,
+  AISourceCitation,
   JournalState,
 } from '../types/journal';
 
@@ -71,24 +76,25 @@ interface LiveStreamState {
   msgId: string;
   text: string;
   actions: AIAppActionResult[];
+  sources: AISourceCitation[];
 }
 
 const STARTER_PROMPTS = [
   {
-    title: 'Total PnL & edge audit',
-    prompt: 'Break down my Total PnL, Total Profits, Total Losses, win rate, and expectancy. Where is my biggest edge or leak?',
+    title: 'Quant edge & tilt audit',
+    prompt: 'Run a full quantitative audit: Total PnL, Win Rate, Pair & Model edge, Long vs Short bias, Post-Loss Tilt, and Weekday breakdown. Where is my sharpest edge or leak?',
   },
   {
-    title: 'Log a trade via AI',
+    title: 'Live macro & market brief',
+    prompt: 'Search the latest central bank policy, treasury yields, and DXY headlines today, and summarize key drivers for gold (XAUUSD) and major FX pairs.',
+  },
+  {
+    title: 'Log & format trade',
     prompt: 'Log a +2.5R Long Win on XAUUSD during London session using Reversal setup with tag A+ Setup.',
   },
   {
-    title: 'First-principles market brief',
-    prompt: 'Explain how central bank liquidity, yield spreads, and dollar flows drive gold and major FX pairs from first principles.',
-  },
-  {
-    title: 'App & playbook control',
-    prompt: 'Open Analytics for me, and suggest one high-impact refinement to my Playbook entry filters.',
+    title: 'Playbook & risk stress test',
+    prompt: 'Open Playbook for me, review my entry & invalidation rules, and stress-test my risk criteria.',
   },
 ];
 
@@ -105,6 +111,7 @@ interface MessageBubbleProps {
   msg: AIChatMessage;
   displayText: string;
   displayActions?: AIAppActionResult[];
+  displaySources?: AISourceCitation[];
   isStreamingThis: boolean;
   isAnyStreaming: boolean;
   streamStatus: string | null;
@@ -129,6 +136,7 @@ const MessageBubble = memo<MessageBubbleProps>(
     msg,
     displayText,
     displayActions,
+    displaySources,
     isStreamingThis,
     isAnyStreaming,
     streamStatus,
@@ -407,6 +415,28 @@ const MessageBubble = memo<MessageBubbleProps>(
                   <span>Streaming response…</span>
                 </div>
               )}
+              {!isStreamingThis && displaySources && displaySources.length > 0 && (
+                <div className="mt-3 pt-2.5 border-t border-white/[0.08] space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#8ebeff]">
+                    <Globe className="w-3 h-3 shrink-0" />
+                    <span>Grounded sources</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {displaySources.map((src) => (
+                      <a
+                        key={src.uri}
+                        href={src.uri}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-lg glass-subcard px-2.5 py-1 text-[11px] font-medium text-[#cfe0f8] hover:text-[#8df0c0] hover:border-[#47dca0]/45 transition max-w-[230px]"
+                      >
+                        <span className="truncate">{src.title}</span>
+                        <ExternalLink className="w-2.5 h-2.5 shrink-0 opacity-75" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
               {!isStreamingThis && (msg.interrupted || msg.error) && (
                 <div className="mt-2.5 pt-2 border-t border-[#ff7d91]/25 flex flex-wrap items-center justify-between gap-2 text-xs text-[#ffb4bf]">
                   <span>
@@ -500,6 +530,7 @@ const ChatMessageList = memo<ChatMessageListProps>(
         );
         const displayText = isStreamingThis ? liveStream!.text : msg.text;
         const displayActions = isStreamingThis ? liveStream!.actions : msg.actions;
+        const displaySources = isStreamingThis ? liveStream!.sources : msg.sources;
 
         return (
           <MessageBubble
@@ -507,6 +538,7 @@ const ChatMessageList = memo<ChatMessageListProps>(
             msg={msg}
             displayText={displayText}
             displayActions={displayActions}
+            displaySources={displaySources}
             isStreamingThis={isStreamingThis}
             isAnyStreaming={isStreaming}
             streamStatus={isStreamingThis ? streamStatus : null}
@@ -558,6 +590,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
   const [isDraggingImage, setIsDraggingImage] = useState(false);
   const [syncContext, setSyncContext] = useState(true);
   const [aiMode, setAiMode] = useState<'fast' | 'deep'>('fast');
+  const [webSearch, setWebSearch] = useState(false);
 
   // Memory drawer state
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -577,9 +610,12 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
 
   const [isFullScreen, setIsFullScreen] = useState(true);
   const [threadsDrawerOpen, setThreadsDrawerOpen] = useState(false);
+  const [threadSearch, setThreadSearch] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedThread, setCopiedThread] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
+  const [attachErrorRetryable, setAttachErrorRetryable] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<{ src: string; name: string } | null>(null);
 
   const prevActiveRef = useRef(isActive);
@@ -605,12 +641,14 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
 
   const streamTextRef = useRef('');
   const streamActionsRef = useRef<AIAppActionResult[]>([]);
+  const streamSourcesRef = useRef<AISourceCitation[]>([]);
   const rafIdRef = useRef<number | null>(null);
 
   const scrollEndRef = useRef<HTMLDivElement | null>(null);
   const messagesViewportRef = useRef<HTMLDivElement | null>(null);
   const scrollRafRef = useRef<number | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const audioClipInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const executeActionsRef = useRef(onExecuteAIActions);
   executeActionsRef.current = onExecuteAIActions;
@@ -626,6 +664,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
   }, []);
 
   const handleVoiceError = useCallback((msg: string) => {
+    setAttachErrorRetryable(false);
     setAttachError(msg);
   }, []);
 
@@ -635,8 +674,11 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
     isListening,
     isTranscribing,
     elapsedSeconds,
+    micBlockedField,
     audioBands,
     toggleField,
+    transcribeAudioFile,
+    dismissMicFallback,
     stop: stopVoice,
     cancel: cancelVoice,
   } = useVoiceDictation({
@@ -698,8 +740,10 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
   }, []);
 
   useEffect(() => {
-    prewarmAIConnection();
-  }, []);
+    if (isActive) {
+      prewarmAIConnection();
+    }
+  }, [isActive]);
 
   // rAF-throttled direct scrollTop auto-scroll so token streaming never triggers smooth-scroll reflow lag
   useEffect(() => {
@@ -757,14 +801,18 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
     };
   }, [immersiveActive, lightboxImage, threadsDrawerOpen]);
 
-  const journalSnapshot = useMemo(
-    () => (isActive && syncContext ? buildJournalContext(journalState, memories) : undefined),
-    [isActive, syncContext, journalState, memories]
+  const resolveJournalSnapshot = useCallback(
+    (promptText?: string) =>
+      syncContext
+        ? buildJournalContext(journalState, memories, { mode: aiMode, prompt: promptText })
+        : undefined,
+    [syncContext, journalState, memories, aiMode]
   );
 
   const processImageFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
     setAttachError(null);
+    setAttachErrorRetryable(false);
     setAddingImage(true);
 
     try {
@@ -778,6 +826,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
       }));
       setAttachments((prev) => [...prev, ...mapped].slice(0, 4));
     } catch (err) {
+      setAttachErrorRetryable(false);
       setAttachError(err instanceof Error ? err.message : 'Could not attach image.');
     } finally {
       setAddingImage(false);
@@ -847,6 +896,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
     setAttachments([]);
     setInput('');
     setAttachError(null);
+    setAttachErrorRetryable(false);
   };
 
   const handleDeleteChat = (id: string) => {
@@ -906,6 +956,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
       msgId: string,
       finalText: string,
       finalActions: AIAppActionResult[],
+      finalSources: AISourceCitation[],
       flags?: { error?: boolean; interrupted?: boolean }
     ) => {
       setConversations((prev) =>
@@ -919,6 +970,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                     ...m,
                     text: finalText,
                     actions: finalActions.length > 0 ? finalActions : m.actions,
+                    sources: finalSources.length > 0 ? finalSources : m.sources,
                     error: flags?.error || false,
                     interrupted: flags?.interrupted || false,
                   }
@@ -932,6 +984,8 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
     []
   );
 
+  const streamStatusRef = useRef<string | null>(null);
+
   const runStreamForHistory = useCallback(
     async (
       convId: string,
@@ -941,11 +995,17 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
       if (activeFieldRef.current) {
         stopVoice(true);
       }
+      const latestPrompt =
+        [...historyForRequest].reverse().find((m) => m.role === 'user')?.text || '';
+      const snapshotForTurn = resolveJournalSnapshot(latestPrompt);
+
       setIsStreaming(true);
+      streamStatusRef.current = 'Thinking…';
       setStreamStatus('Thinking…');
       streamTextRef.current = '';
       streamActionsRef.current = [];
-      setLiveStream({ convId, msgId: assistantMsgId, text: '', actions: [] });
+      streamSourcesRef.current = [];
+      setLiveStream({ convId, msgId: assistantMsgId, text: '', actions: [], sources: [] });
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -959,6 +1019,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
             msgId: assistantMsgId,
             text: streamTextRef.current,
             actions: [...streamActionsRef.current],
+            sources: [...streamSourcesRef.current],
           });
         });
       };
@@ -973,12 +1034,16 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
       try {
         const finalText = await streamAIChat({
           messages: historyForRequest,
-          journalContext: journalSnapshot,
+          journalContext: snapshotForTurn,
           mode: aiMode,
+          webSearch,
           speakSync: false,
           signal: controller.signal,
           onStatus: (status) => {
-            setStreamStatus(status);
+            if (streamStatusRef.current !== status) {
+              streamStatusRef.current = status;
+              setStreamStatus(status);
+            }
           },
           onActions: async (actions) => {
             if (!executeActionsRef.current || actions.length === 0) return;
@@ -988,16 +1053,43 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
               scheduleRafFlush();
             }
           },
+          onSources: (sources) => {
+            if (sources.length > 0) {
+              streamSourcesRef.current = sources;
+              scheduleRafFlush();
+            }
+          },
           onDelta: (delta) => {
+            const wasEmpty = streamTextRef.current.length === 0;
             streamTextRef.current += delta;
-            setStreamStatus(null);
-            scheduleRafFlush();
+            if (streamStatusRef.current !== null) {
+              streamStatusRef.current = null;
+              setStreamStatus(null);
+            }
+            if (wasEmpty) {
+              cancelRaf();
+              setLiveStream({
+                convId,
+                msgId: assistantMsgId,
+                text: streamTextRef.current,
+                actions: [...streamActionsRef.current],
+                sources: [...streamSourcesRef.current],
+              });
+            } else {
+              scheduleRafFlush();
+            }
           },
         });
 
         const committedText = finalText || streamTextRef.current;
         cancelRaf();
-        commitFinalStreamMessage(convId, assistantMsgId, committedText, streamActionsRef.current);
+        commitFinalStreamMessage(
+          convId,
+          assistantMsgId,
+          committedText,
+          streamActionsRef.current,
+          streamSourcesRef.current
+        );
       } catch (err) {
         cancelRaf();
         const isAborted = (err as Error)?.name === 'AbortError' || controller.signal.aborted;
@@ -1009,14 +1101,23 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
             assistantMsgId,
             partial || 'Response stopped.',
             streamActionsRef.current,
+            streamSourcesRef.current,
             { interrupted: Boolean(partial) }
           );
         } else if (err instanceof StreamInterruptedError) {
           const partial = err.partialText || streamTextRef.current;
-          commitFinalStreamMessage(convId, assistantMsgId, partial, streamActionsRef.current, {
-            error: true,
-            interrupted: true,
-          });
+          commitFinalStreamMessage(
+            convId,
+            assistantMsgId,
+            partial,
+            streamActionsRef.current,
+            streamSourcesRef.current,
+            {
+              error: true,
+              interrupted: true,
+            }
+          );
+          setAttachErrorRetryable(true);
           setAttachError(err.message);
         } else {
           const partial = streamTextRef.current.trim();
@@ -1026,18 +1127,20 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
             assistantMsgId,
             partial || msg,
             streamActionsRef.current,
+            streamSourcesRef.current,
             { error: true, interrupted: Boolean(partial) }
           );
         }
       } finally {
         cancelRaf();
         abortRef.current = null;
+        streamStatusRef.current = null;
         setLiveStream(null);
         setIsStreaming(false);
         setStreamStatus(null);
       }
     },
-    [aiMode, commitFinalStreamMessage, journalSnapshot, stopVoice]
+    [aiMode, commitFinalStreamMessage, resolveJournalSnapshot, stopVoice, webSearch]
   );
 
   const handleSend = useCallback(
@@ -1053,12 +1156,14 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
       }
 
       if (!isOnline) {
+        setAttachErrorRetryable(false);
         setAttachError('KAIROS requires an internet connection. Your local journal works offline.');
         return;
       }
 
       stopVoicePlayback();
       setAttachError(null);
+      setAttachErrorRetryable(false);
       setEditingMsgId(null);
       const convId = conv.id;
 
@@ -1113,11 +1218,13 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
       if (!conv) return;
 
       if (!isOnline) {
+        setAttachErrorRetryable(true);
         setAttachError('KAIROS requires an internet connection. Reconnect and tap Retry.');
         return;
       }
 
       setAttachError(null);
+      setAttachErrorRetryable(false);
       const idx = conv.messages.findIndex((m) => m.id === targetMsgId);
       if (idx <= 0) return;
 
@@ -1165,6 +1272,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
       const trimmed = editDraft.trim();
       if (!trimmed || isStreamingRef.current) return;
       if (!isOnline) {
+        setAttachErrorRetryable(false);
         setAttachError('KAIROS requires an internet connection. Reconnect and try again.');
         return;
       }
@@ -1178,6 +1286,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
 
       stopVoicePlayback();
       setAttachError(null);
+      setAttachErrorRetryable(false);
       setEditingMsgId(null);
       setEditDraft('');
 
@@ -1221,11 +1330,53 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
     }
   }, []);
 
+  const handleCopyConversation = useCallback(async () => {
+    const conv = activeConversationRef.current;
+    if (!conv || conv.messages.length === 0) return;
+    const markdown = conv.messages
+      .filter((m) => m.text.trim())
+      .map((m) => `### ${m.role === 'user' ? 'Trader' : 'KAIROS'}\n${m.text.trim()}`)
+      .join('\n\n---\n\n');
+    try {
+      await navigator.clipboard.writeText(markdown);
+      setCopiedThread(true);
+      window.setTimeout(() => setCopiedThread(false), 1800);
+    } catch {
+      // Ignore clipboard failures
+    }
+  }, []);
+
+  const filteredConversations = useMemo(() => {
+    const q = threadSearch.trim().toLowerCase();
+    if (!q) return conversations;
+    return conversations.filter(
+      (c) =>
+        c.title.toLowerCase().includes(q) ||
+        c.messages.some((m) => m.text.toLowerCase().includes(q))
+    );
+  }, [conversations, threadSearch]);
+
   const handleOpenLightbox = useCallback((att: { src: string; name: string }) => {
     setLightboxImage(att);
   }, []);
 
   const lastMessage = messages[messages.length - 1];
+  const prevUserMessage =
+    messages.length >= 2 && lastMessage?.role === 'model'
+      ? messages[messages.length - 2]
+      : undefined;
+  const followUpChips = useMemo(() => {
+    if (isStreaming || !lastMessage || lastMessage.role !== 'model' || lastMessage.error || !lastMessage.text.trim()) {
+      return [];
+    }
+    return generateFollowUpChips(
+      prevUserMessage?.text || '',
+      lastMessage.text,
+      lastMessage.actions,
+      Boolean(lastMessage.sources?.length)
+    );
+  }, [isStreaming, lastMessage, prevUserMessage]);
+
   const canQuickRetryLast =
     !isStreaming && Boolean(lastMessage && lastMessage.role === 'model');
 
@@ -1354,6 +1505,28 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
             )}
           </button>
 
+          {messages.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void handleCopyConversation()}
+              title="Copy full conversation Markdown"
+              aria-label="Copy full conversation"
+              className="hidden sm:inline-flex min-h-[40px] items-center gap-1.5 rounded-xl glass-subcard px-2.5 py-1.5 text-xs font-semibold text-[#c9d4e7] hover:text-[#8df0c0] hover:border-[#47dca0]/40 transition whitespace-nowrap shrink-0"
+            >
+              {copiedThread ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-[#47dca0]" />
+                  <span>Copied</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-[#8df0c0]" />
+                  <span className="hidden xl:inline">Copy chat</span>
+                </>
+              )}
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleNewChat}
@@ -1387,8 +1560,21 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
               <span>Threads</span>
               <span className="tabular-nums text-[11px] text-[#6d7d96]">{conversations.length}</span>
             </div>
+            {conversations.length >= 3 && (
+              <div className="mt-2 relative">
+                <Search className="w-3.5 h-3.5 text-[#6d7d96] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={threadSearch}
+                  onChange={(e) => setThreadSearch(e.target.value)}
+                  placeholder="Search threads…"
+                  aria-label="Search conversation threads"
+                  className="w-full rounded-xl glass-input pl-8 pr-2.5 py-1.5 text-xs text-[#eef3fb] placeholder:text-[#6d7d96] focus:outline-none"
+                />
+              </div>
+            )}
             <div className="mt-2 flex-1 overflow-y-auto overscroll-contain space-y-1">
-              {conversations.map((conv) => {
+              {filteredConversations.map((conv) => {
                 const active = conv.id === activeConversation?.id;
                 return (
                   <div
@@ -1417,6 +1603,11 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                   </div>
                 );
               })}
+              {filteredConversations.length === 0 && (
+                <p className="px-2 py-4 text-center text-[11px] text-[#6d7d96]">
+                  No matching threads
+                </p>
+              )}
             </div>
           </aside>
         )}
@@ -1491,27 +1682,44 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                   </div>
                 </div>
               ) : (
-                <ChatMessageList
-                  messages={messages}
-                  activeConvId={activeConversation?.id}
-                  liveStream={liveStream}
-                  isStreaming={isStreaming}
-                  streamStatus={streamStatus}
-                  aiMode={aiMode}
-                  copiedId={copiedId}
-                  voiceState={voiceState}
-                  activeSpeechMsgId={activeSpeechMsgId}
-                  editingMsgId={editingMsgId}
-                  editDraft={editDraft}
-                  onEditDraftChange={setEditDraft}
-                  onStartEdit={handleStartEdit}
-                  onCancelEdit={handleCancelEdit}
-                  onSaveEdit={handleSaveEdit}
-                  onCopy={handleCopy}
-                  onRetry={handleRetryMessage}
-                  onSpeakToggle={handleSpeakToggle}
-                  onOpenImage={handleOpenLightbox}
-                />
+                <>
+                  <ChatMessageList
+                    messages={messages}
+                    activeConvId={activeConversation?.id}
+                    liveStream={liveStream}
+                    isStreaming={isStreaming}
+                    streamStatus={streamStatus}
+                    aiMode={aiMode}
+                    copiedId={copiedId}
+                    voiceState={voiceState}
+                    activeSpeechMsgId={activeSpeechMsgId}
+                    editingMsgId={editingMsgId}
+                    editDraft={editDraft}
+                    onEditDraftChange={setEditDraft}
+                    onStartEdit={handleStartEdit}
+                    onCancelEdit={handleCancelEdit}
+                    onSaveEdit={handleSaveEdit}
+                    onCopy={handleCopy}
+                    onRetry={handleRetryMessage}
+                    onSpeakToggle={handleSpeakToggle}
+                    onOpenImage={handleOpenLightbox}
+                  />
+                  {followUpChips.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 pt-1 pl-1">
+                      {followUpChips.map((chip) => (
+                        <button
+                          key={chip}
+                          type="button"
+                          onClick={() => void handleSend(chip)}
+                          className="min-h-[34px] inline-flex items-center gap-1.5 rounded-xl glass-subcard px-3 py-1.5 text-xs font-medium text-[#b8c6db] hover:text-[#8df0c0] hover:border-[#47dca0]/45 transition text-left"
+                        >
+                          <Sparkles className="w-3 h-3 text-[#8df0c0] shrink-0" />
+                          <span>{chip}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
               <div ref={scrollEndRef} />
             </div>
@@ -1520,11 +1728,26 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
           {/* Floating Liquid-Glass Composer Capsule */}
           <div className="px-4 sm:px-6 lg:px-10 pb-3 sm:pb-5 pt-1 shrink-0">
             <div className={`${immersiveActive ? 'max-w-4xl' : 'max-w-3xl'} mx-auto w-full space-y-2`}>
+              <input
+                ref={audioClipInputRef}
+                type="file"
+                accept="audio/*"
+                capture="user"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (file) {
+                    void transcribeAudioFile('ai-prompt', file);
+                  }
+                }}
+                className="hidden"
+              />
+
               {attachError && (
                 <div className="flex items-center justify-between gap-2 text-xs text-[#ff7d91] px-1">
                   <span className="truncate">{attachError}</span>
                   <div className="flex items-center gap-2 shrink-0">
-                    {canQuickRetryLast && lastMessage && (
+                    {attachErrorRetryable && canQuickRetryLast && lastMessage && (
                       <button
                         type="button"
                         onClick={() => void handleRetryMessage(lastMessage.id)}
@@ -1536,9 +1759,48 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                     )}
                     <button
                       type="button"
-                      onClick={() => setAttachError(null)}
+                      onClick={() => {
+                        setAttachError(null);
+                        setAttachErrorRetryable(false);
+                      }}
                       aria-label="Dismiss error"
                       className="text-[#8b9ab0] hover:text-[#eef3fb]"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {micBlockedField === 'ai-prompt' && !isListening && !isTranscribing && (
+                <div className="rounded-2xl glass-subcard border border-[#8ebeff]/35 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Mic className="w-4 h-4 text-[#8ebeff] shrink-0" />
+                    <span className="text-xs text-[#dce6f5]">
+                      Live browser mic is unavailable here — record or upload an audio clip instead.
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 ml-auto shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => void toggleField('ai-prompt')}
+                      className="min-h-[34px] rounded-xl glass-subcard px-2.5 py-1 text-xs font-medium text-[#cfe0f8] hover:text-[#eef3fb] transition"
+                    >
+                      Try live mic
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => audioClipInputRef.current?.click()}
+                      className="min-h-[34px] inline-flex items-center gap-1.5 rounded-xl bg-[#47dca0] px-3 py-1 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] transition"
+                    >
+                      <Mic className="w-3.5 h-3.5" />
+                      <span>Record / upload clip</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={dismissMicFallback}
+                      aria-label="Dismiss voice note options"
+                      className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-xl text-[#8b9ab0] hover:text-[#eef3fb] transition"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -1655,7 +1917,11 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                   ref={textareaRef}
                   rows={2}
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onFocus={prewarmAIConnection}
+                  onChange={(e) => {
+                    prewarmAIConnection();
+                    setInput(e.target.value);
+                  }}
                   onPaste={handlePaste}
                   onKeyDown={(e) => {
                     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e') {
@@ -1784,6 +2050,26 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                         <span>Deep</span>
                       </button>
                     </div>
+
+                    {/* Web Search Grounding Toggle directly inside chat interface */}
+                    <button
+                      type="button"
+                      onClick={() => setWebSearch((v) => !v)}
+                      aria-label={webSearch ? 'Live Web Search grounded' : 'Enable Live Web Search grounding'}
+                      title={
+                        webSearch
+                          ? 'Live Web Search: Always grounded on latest headlines & rates'
+                          : 'Smart Auto Web Search (tap to force live search on every prompt)'
+                      }
+                      className={`min-h-[38px] inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold border transition whitespace-nowrap shrink-0 ${
+                        webSearch
+                          ? 'bg-[#8ebeff]/18 border-[#8ebeff]/50 text-[#cfe4ff]'
+                          : 'glass-subcard text-[#9aa8be] hover:text-[#eef3fb]'
+                      }`}
+                    >
+                      <Globe className={`w-4 h-4 ${webSearch ? 'text-[#8ebeff]' : 'text-[#8df0c0]'}`} />
+                      <span className="hidden md:inline">Web</span>
+                    </button>
 
                     {/* Memory Icon directly inside chat interface */}
                     <button
