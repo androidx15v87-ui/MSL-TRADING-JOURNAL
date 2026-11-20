@@ -21,7 +21,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 3000);
-const APP_VERSION = '10.5.4';
+const APP_VERSION = '10.6.9';
 const FAST_MODEL_NAME = 'gemini-3.1-flash-lite';
 const HYDROGEN_MODEL_NAME = 'gemini-4-hydrogen';
 const TTS_MODEL_NAME = 'gemini-3.8-flash-lite-tts';
@@ -81,9 +81,21 @@ const APP_CONTROL_TOOLS: FunctionDeclaration[] = [
         direction: { type: Type.STRING, description: 'Long or Short.' },
         setup: { type: Type.STRING, description: 'Reversal, Continuation, Breakout, or Other.' },
         session: { type: Type.STRING, description: 'London, New York, Asia, Overlap, or Other.' },
-        result: { type: Type.STRING, description: 'Win, Loss, or BE.' },
-        r: { type: Type.NUMBER, description: 'Realized R-multiple.' },
-        risk: { type: Type.NUMBER, description: 'Risk in R (default 1).' },
+        result: { type: Type.STRING, description: 'Win, Loss, BE, or Missed.' },
+        r: { type: Type.NUMBER, description: 'P&L amount (or missed opportunity) in pnlUnit.' },
+        risk: { type: Type.NUMBER, description: 'Risk size in riskUnit (default 1).' },
+        pnlUnit: {
+          type: Type.STRING,
+          description: 'Unit for P&L: r (R-multiple), percent (%), money ($), or value.',
+        },
+        riskUnit: {
+          type: Type.STRING,
+          description: 'Unit for risk: r, percent, money, or value.',
+        },
+        currency: {
+          type: Type.STRING,
+          description: 'Currency symbol such as $, €, £ when using money unit.',
+        },
         model: { type: Type.STRING, description: 'Model name.' },
         tags: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'Execution tags.' },
         notes: { type: Type.STRING, description: 'Trade notes.' },
@@ -103,9 +115,12 @@ const APP_CONTROL_TOOLS: FunctionDeclaration[] = [
         direction: { type: Type.STRING },
         setup: { type: Type.STRING },
         session: { type: Type.STRING },
-        result: { type: Type.STRING },
+        result: { type: Type.STRING, description: 'Win, Loss, BE, or Missed.' },
         r: { type: Type.NUMBER },
         risk: { type: Type.NUMBER },
+        pnlUnit: { type: Type.STRING, description: 'r, percent, money, or value.' },
+        riskUnit: { type: Type.STRING, description: 'r, percent, money, or value.' },
+        currency: { type: Type.STRING },
         model: { type: Type.STRING },
         tags: { type: Type.ARRAY, items: { type: Type.STRING } },
         notes: { type: Type.STRING },
@@ -195,6 +210,8 @@ const APP_CONTROL_TOOLS: FunctionDeclaration[] = [
   },
 ];
 
+const GEMINI_TOOLS = [{ functionDeclarations: APP_CONTROL_TOOLS }];
+
 function getAiClient(apiVersion?: 'v1alpha'): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -232,7 +249,7 @@ function buildSystemInstruction(journalContext?: string): string {
   return [
     `You are KAIROS — a sharp, high-velocity intelligence for markets, quantitative trading analysis, probability, coding, general knowledge, and direct MSL Journal control.`,
     '- Adapt depth to the prompt: crisp 1–3 sentences for quick asks; structured Markdown/tables/code for analytical audits or deep dives.',
-    '- Ground all trade IDs, PnL, win rate, setups, and notes strictly in the Live Journal Snapshot.',
+    '- Ground all trade IDs, PnL, units (R, %, money, value), missed trades, win rate, setups, and notes strictly in the Live Journal Snapshot. Missed trades are excluded from realized portfolio totals.',
     '- On charts: read Structure & Bias, Liquidity/POI, Entry/Invalidation, and R:R Verdict.',
     '- Respect `Saved User Memories`. Use `save_memory` / `forget_memory` for lasting preferences/rules. Call app tools only when requested.',
     journalContext
@@ -362,13 +379,24 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
   }
 }
 
+function formatToolMetric(val: unknown, unit: unknown, currency: unknown): string {
+  const num = Number(val || 0);
+  const abs = Math.abs(num);
+  const sign = num > 0 ? '+' : num < 0 ? '-' : '';
+  const u = String(unit || 'r');
+  if (u === 'percent') return `${sign}${abs}%`;
+  if (u === 'money') return `${sign}${String(currency || '$')}${abs}`;
+  if (u === 'value') return `${sign}${abs}`;
+  return `${sign}${abs}R`;
+}
+
 function summarizeActionFallback(calls: FunctionCall[]): string {
   const summary = calls
     .map((c) => {
       const args = (c.args || {}) as Record<string, unknown>;
       switch (c.name) {
         case 'log_trade':
-          return `Logged **${String(args.pair || 'Trade').toUpperCase()}** ${String(args.direction || '')} (${String(args.result || '')} ${args.r ?? 0}R)`;
+          return `Logged **${String(args.pair || 'Trade').toUpperCase()}** ${String(args.direction || '')} (${String(args.result || '')} ${formatToolMetric(args.r, args.pnlUnit, args.currency)})`;
         case 'update_trade':
           return `Updated trade \`${String(args.tradeId || '')}\``;
         case 'delete_trade':
@@ -949,7 +977,7 @@ async function startServer() {
           { model: HYDROGEN_MODEL_NAME, level: ThinkingLevel.LOW, timeoutMs: 6500 },
         ];
 
-    const retryBackoffs = [0, 300, 850];
+    const retryBackoffs = [0, 180, 550];
 
     try {
       let activeModel = baseCandidates[0].model;
@@ -994,7 +1022,7 @@ async function startServer() {
                   thinkingConfig: {
                     thinkingLevel: pass >= 2 ? ThinkingLevel.LOW : candidate.level,
                   },
-                  tools: [{ functionDeclarations: APP_CONTROL_TOOLS }],
+                  tools: GEMINI_TOOLS,
                 },
               }),
               candidate.timeoutMs,
@@ -1131,17 +1159,25 @@ async function startServer() {
               const turn2Level =
                 activeModel === HYDROGEN_MODEL_NAME ? ThinkingLevel.LOW : ThinkingLevel.MINIMAL;
 
+              const turn2Config: {
+                systemInstruction: string;
+                maxOutputTokens?: number;
+                thinkingConfig: { thinkingLevel: ThinkingLevel };
+              } = {
+                systemInstruction,
+                thinkingConfig: {
+                  thinkingLevel: turn2Level,
+                },
+              };
+              if (activeModel !== HYDROGEN_MODEL_NAME) {
+                turn2Config.maxOutputTokens = 420;
+              }
+
               const stream2 = await withTimeout(
                 ai.models.generateContentStream({
                   model: activeModel,
                   contents: turn2Contents,
-                  config: {
-                    systemInstruction,
-                    maxOutputTokens: 420,
-                    thinkingConfig: {
-                      thinkingLevel: turn2Level,
-                    },
-                  },
+                  config: turn2Config,
                 }),
                 6000,
                 `${activeModel} turn2`

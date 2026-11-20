@@ -1,12 +1,19 @@
 import React, { useState } from 'react';
 import { Calendar, Copy, Edit3, Trash2, X, ZoomIn } from 'lucide-react';
 import { motion } from 'motion/react';
-import { formatDate, formatR, formatTime } from '../lib/calculations';
-import type { CustomField, Trade } from '../types/journal';
+import {
+  formatDate,
+  formatTime,
+  formatTradePnL,
+  formatTradeRisk,
+  getUnitShortLabel,
+} from '../lib/calculations';
+import type { CustomField, JournalSettings, Trade } from '../types/journal';
 
 interface TradeDetailModalProps {
   trade: Trade | null;
   fields: CustomField[];
+  settings?: JournalSettings;
   onClose: () => void;
   onEdit: (trade: Trade) => void;
   onDuplicate: (trade: Trade) => void;
@@ -16,6 +23,7 @@ interface TradeDetailModalProps {
 export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   trade,
   fields,
+  settings,
   onClose,
   onEdit,
   onDuplicate,
@@ -30,6 +38,8 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
       ? 'text-[#47dca0]'
       : trade.result === 'Loss'
       ? 'text-[#ff7d91]'
+      : trade.result === 'Missed'
+      ? 'text-[#f5cc79]'
       : 'text-[#8ebeff]';
 
   const customEntries = Object.entries(trade.custom || {}).filter(([, val]) => {
@@ -44,6 +54,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   };
 
   const tradeTags = Array.isArray(trade.tags) ? trade.tags.filter(Boolean) : [];
+  const pnlDisplay = formatTradePnL(trade, settings?.defaultPnlUnit, settings?.currency);
+  const riskDisplay = formatTradeRisk(trade, settings?.defaultRiskUnit, settings?.currency);
+  const riskLabel = getUnitShortLabel(
+    trade.riskUnit || settings?.defaultRiskUnit || 'r',
+    trade.currency || settings?.currency
+  );
 
   return (
     <>
@@ -77,11 +93,12 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   {trade.pair}
                 </h2>
                 <span className={`font-mono text-lg font-bold tabular-nums ${outcomeColor}`}>
-                  {formatR(trade.r)}
+                  {pnlDisplay}
                 </span>
               </div>
               <p className="mt-1 text-xs text-[#9aa8be]">
-                {trade.direction} · {trade.setup} · {trade.session} · {trade.result}
+                {trade.direction} · {trade.setup} · {trade.session} ·{' '}
+                {trade.result === 'Missed' ? 'Missed setup' : trade.result}
               </p>
             </div>
             <button
@@ -101,9 +118,9 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 <p className={`mt-0.5 text-sm font-bold ${outcomeColor}`}>{trade.result}</p>
               </div>
               <div>
-                <p className="text-[11px] text-[#7f8fa8]">Risk (R)</p>
+                <p className="text-[11px] text-[#7f8fa8]">Risk ({riskLabel})</p>
                 <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-[#eef3fb]">
-                  {Number(trade.risk || 1).toFixed(1)}R
+                  {riskDisplay}
                 </p>
               </div>
               <div>

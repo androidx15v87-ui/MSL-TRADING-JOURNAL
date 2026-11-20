@@ -8,6 +8,8 @@ import type {
   CustomField,
   CustomFieldValue,
   Direction,
+  JournalSettings,
+  MetricUnit,
   SessionType,
   SetupType,
   Trade,
@@ -22,6 +24,7 @@ interface TradeModalProps {
   draftTemplate?: Trade | null;
   initialDate?: string;
   defaultMarket?: string;
+  settings?: JournalSettings;
   models: TradingModel[];
   fields: CustomField[];
   existingTags?: string[];
@@ -61,6 +64,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
   draftTemplate,
   initialDate,
   defaultMarket,
+  settings,
   models,
   fields,
   existingTags = [],
@@ -78,6 +82,9 @@ export const TradeModal: React.FC<TradeModalProps> = ({
   const [result, setResult] = useState<TradeOutcome>('BE');
   const [r, setR] = useState('0');
   const [risk, setRisk] = useState('1');
+  const [pnlUnit, setPnlUnit] = useState<MetricUnit>('r');
+  const [riskUnit, setRiskUnit] = useState<MetricUnit>('r');
+  const [currency, setCurrency] = useState('$');
   const [model, setModel] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
@@ -153,6 +160,9 @@ export const TradeModal: React.FC<TradeModalProps> = ({
       stopDictation(true);
       return;
     }
+    const defaultPnlUnit = settings?.defaultPnlUnit || 'r';
+    const defaultRiskUnit = settings?.defaultRiskUnit || 'r';
+    const defaultCurrency = settings?.currency || '$';
     const source = trade || draftTemplate;
     if (trade) {
       setDate(trade.date.slice(0, 16));
@@ -163,6 +173,9 @@ export const TradeModal: React.FC<TradeModalProps> = ({
       setResult(trade.result);
       setR(String(trade.r ?? 0));
       setRisk(String(trade.risk ?? 1));
+      setPnlUnit(trade.pnlUnit || defaultPnlUnit);
+      setRiskUnit(trade.riskUnit || defaultRiskUnit);
+      setCurrency(trade.currency || defaultCurrency);
       setModel(trade.model || '');
       setTags(Array.isArray(trade.tags) ? [...trade.tags] : []);
       setTagInput('');
@@ -179,6 +192,9 @@ export const TradeModal: React.FC<TradeModalProps> = ({
       setResult(source.result);
       setR(String(source.r ?? 2));
       setRisk(String(source.risk ?? 1));
+      setPnlUnit(source.pnlUnit || defaultPnlUnit);
+      setRiskUnit(source.riskUnit || defaultRiskUnit);
+      setCurrency(source.currency || defaultCurrency);
       setModel(source.model || '');
       setTags(Array.isArray(source.tags) ? [...source.tags] : []);
       setTagInput('');
@@ -197,6 +213,9 @@ export const TradeModal: React.FC<TradeModalProps> = ({
       setResult('Win');
       setR('2');
       setRisk('1');
+      setPnlUnit(defaultPnlUnit);
+      setRiskUnit(defaultRiskUnit);
+      setCurrency(defaultCurrency);
       setModel('');
       setTags([]);
       setTagInput('');
@@ -204,7 +223,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
       setCustom({});
       setImages([]);
     }
-  }, [open, trade, draftTemplate, initialDate, stopDictation]);
+  }, [open, trade, draftTemplate, initialDate, settings, stopDictation]);
 
   const suggestedTags = useMemo(() => {
     const seen = new Set<string>();
@@ -278,7 +297,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
       setR('0');
     } else if (next === 'Loss' && currentR > 0) {
       setR(String(-Math.abs(currentR)));
-    } else if (next === 'Win' && currentR < 0) {
+    } else if ((next === 'Win' || next === 'Missed') && currentR < 0) {
       setR(String(Math.abs(currentR)));
     }
   };
@@ -327,7 +346,10 @@ export const TradeModal: React.FC<TradeModalProps> = ({
         session,
         result,
         r: Number(r || 0),
-        risk: Number(risk || 0),
+        risk: Math.max(0, Number(risk || 0)),
+        pnlUnit,
+        riskUnit,
+        currency: (currency || '$').trim().slice(0, 8) || '$',
         model: model.trim(),
         tags: finalTags,
         notes: notes.trim(),
@@ -536,42 +558,200 @@ export const TradeModal: React.FC<TradeModalProps> = ({
               </select>
             </label>
 
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-[#a9b7cc]">Outcome</span>
-              <select
-                value={result}
-                onChange={(e) => handleOutcomeChange(e.target.value as TradeOutcome)}
-                className="w-full min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb]"
-              >
-                <option value="Win">Win</option>
-                <option value="Loss">Loss</option>
-                <option value="BE">BE</option>
-              </select>
-            </label>
+            <div className="sm:col-span-2 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-[#a9b7cc]">Outcome</span>
+                {result === 'Missed' && (
+                  <span className="text-[11px] font-medium text-[#f5cc79]">
+                    Tracked separately — excluded from realized win rate &amp; P&amp;L
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Trade outcome">
+                {(
+                  [
+                    {
+                      value: 'Win' as TradeOutcome,
+                      label: 'Win',
+                      activeClass:
+                        'bg-[#47dca0]/18 border-[#47dca0]/60 text-[#8df0c0] shadow-[0_0_20px_-6px_rgba(71,220,160,0.45)]',
+                    },
+                    {
+                      value: 'Loss' as TradeOutcome,
+                      label: 'Loss',
+                      activeClass:
+                        'bg-[#ff7d91]/18 border-[#ff7d91]/60 text-[#ffb4bf] shadow-[0_0_20px_-6px_rgba(255,125,145,0.45)]',
+                    },
+                    {
+                      value: 'BE' as TradeOutcome,
+                      label: 'BE',
+                      activeClass:
+                        'bg-[#8ebeff]/18 border-[#8ebeff]/60 text-[#b7d6ff] shadow-[0_0_20px_-6px_rgba(142,190,255,0.4)]',
+                    },
+                    {
+                      value: 'Missed' as TradeOutcome,
+                      label: 'Missed',
+                      activeClass:
+                        'bg-[#f5cc79]/18 border-[#f5cc79]/60 text-[#f5cc79] shadow-[0_0_20px_-6px_rgba(245,204,121,0.4)]',
+                    },
+                  ] as const
+                ).map((opt) => {
+                  const selected = result === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => handleOutcomeChange(opt.value)}
+                      className={`min-h-[44px] rounded-xl border text-xs sm:text-sm font-bold transition ${
+                        selected
+                          ? opt.activeClass
+                          : 'glass-subcard text-[#8b9ab0] hover:text-[#eef3fb]'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-[#a9b7cc]">R multiple</span>
+            {/* Flexible Profit/Loss with Unit Toggle */}
+            <div className="rounded-xl glass-subcard p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <label htmlFor="trade-pnl-input" className="text-xs font-medium text-[#a9b7cc]">
+                  {result === 'Missed' ? 'Missed move' : 'Profit / loss'}{' '}
+                  <span className="text-[#8df0c0]">
+                    (
+                    {pnlUnit === 'r'
+                      ? 'R-Ratio'
+                      : pnlUnit === 'percent'
+                      ? '%'
+                      : pnlUnit === 'money'
+                      ? currency
+                      : 'Value'}
+                    )
+                  </span>
+                </label>
+                <div className="inline-flex rounded-lg bg-[#070c17]/90 border border-white/[0.08] p-0.5">
+                  {(
+                    [
+                      { id: 'r' as MetricUnit, label: 'R' },
+                      { id: 'percent' as MetricUnit, label: '%' },
+                      { id: 'money' as MetricUnit, label: currency || '$' },
+                      { id: 'value' as MetricUnit, label: 'Val' },
+                    ] as const
+                  ).map((u) => (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() => setPnlUnit(u.id)}
+                      className={`min-h-[28px] px-2 rounded-md text-[11px] font-bold transition ${
+                        pnlUnit === u.id
+                          ? 'bg-[#47dca0] text-[#051612]'
+                          : 'text-[#8b9ab0] hover:text-[#eef3fb]'
+                      }`}
+                    >
+                      {u.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <input
+                id="trade-pnl-input"
                 type="number"
-                step="0.01"
+                step="any"
                 value={r}
                 onChange={(e) => setR(e.target.value)}
                 required
+                placeholder={pnlUnit === 'money' ? '250.00' : pnlUnit === 'percent' ? '2.5' : '2.0'}
                 className="w-full min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb] font-mono tabular-nums"
               />
-            </label>
+            </div>
 
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-[#a9b7cc]">Risk (R)</span>
+            {/* Flexible Risk with Unit Toggle */}
+            <div className="rounded-xl glass-subcard p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <label htmlFor="trade-risk-input" className="text-xs font-medium text-[#a9b7cc]">
+                  Risk{' '}
+                  <span className="text-[#8ebeff]">
+                    (
+                    {riskUnit === 'r'
+                      ? 'R-Ratio'
+                      : riskUnit === 'percent'
+                      ? '%'
+                      : riskUnit === 'money'
+                      ? currency
+                      : 'Value'}
+                    )
+                  </span>
+                </label>
+                <div className="inline-flex rounded-lg bg-[#070c17]/90 border border-white/[0.08] p-0.5">
+                  {(
+                    [
+                      { id: 'r' as MetricUnit, label: 'R' },
+                      { id: 'percent' as MetricUnit, label: '%' },
+                      { id: 'money' as MetricUnit, label: currency || '$' },
+                      { id: 'value' as MetricUnit, label: 'Val' },
+                    ] as const
+                  ).map((u) => (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() => setRiskUnit(u.id)}
+                      className={`min-h-[28px] px-2 rounded-md text-[11px] font-bold transition ${
+                        riskUnit === u.id
+                          ? 'bg-[#8ebeff] text-[#051020]'
+                          : 'text-[#8b9ab0] hover:text-[#eef3fb]'
+                      }`}
+                    >
+                      {u.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <input
+                id="trade-risk-input"
                 type="number"
-                step="0.1"
+                step="any"
                 min="0"
                 value={risk}
                 onChange={(e) => setRisk(e.target.value)}
+                placeholder={riskUnit === 'money' ? '100.00' : '1.0'}
                 className="w-full min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb] font-mono tabular-nums"
               />
-            </label>
+            </div>
+
+            {(pnlUnit === 'money' || riskUnit === 'money') && (
+              <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-2 rounded-xl glass-subcard px-3.5 py-2.5">
+                <span className="text-xs font-medium text-[#a9b7cc]">Money currency symbol</span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {['$', '€', '£', '¥', '₦'].map((sym) => (
+                    <button
+                      key={sym}
+                      type="button"
+                      onClick={() => setCurrency(sym)}
+                      className={`min-h-[32px] min-w-[34px] rounded-lg border px-2 text-xs font-bold transition ${
+                        currency === sym
+                          ? 'bg-[#47dca0]/18 border-[#47dca0]/55 text-[#8df0c0]'
+                          : 'bg-[#080d18]/80 border-white/[0.08] text-[#8b9ab0] hover:text-[#eef3fb]'
+                      }`}
+                    >
+                      {sym}
+                    </button>
+                  ))}
+                  <input
+                    type="text"
+                    maxLength={8}
+                    value={currency}
+                    onChange={(e) => setCurrency(e.target.value.slice(0, 8))}
+                    aria-label="Custom currency symbol"
+                    className="w-14 min-h-[32px] rounded-lg glass-input px-2 text-center text-xs font-mono text-[#eef3fb]"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Collapsible Position Size & Risk Calculator */}
@@ -596,7 +776,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
               <div className="px-3.5 pb-3.5 pt-2 border-t border-white/[0.07] space-y-3">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                   <label className="block space-y-1">
-                    <span className="text-[11px] text-[#8b9ab0]">Balance ($)</span>
+                    <span className="text-[11px] text-[#8b9ab0]">Balance ({currency || '$'})</span>
                     <input
                       type="number"
                       min="0"
@@ -629,7 +809,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
                     />
                   </label>
                   <label className="block space-y-1">
-                    <span className="text-[11px] text-[#8b9ab0]">$/unit per pip</span>
+                    <span className="text-[11px] text-[#8b9ab0]">{currency || '$'}/unit per pip</span>
                     <input
                       type="number"
                       min="0"
@@ -642,9 +822,10 @@ export const TradeModal: React.FC<TradeModalProps> = ({
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#9aa8be]">
                   <span className="tabular-nums">
-                    Dollar risk:{' '}
+                    Money risk:{' '}
                     <strong className="font-mono text-[#eef3fb]">
-                      ${sizerCalculations.dollarRisk.toFixed(2)}
+                      {currency || '$'}
+                      {sizerCalculations.dollarRisk.toFixed(2)}
                     </strong>
                   </span>
                   <span className="tabular-nums">

@@ -118,9 +118,17 @@ function sanitizeTradePayload(uid: string, trade: Trade) {
   const session = (['London', 'New York', 'Asia', 'Overlap', 'Other'].includes(trade.session)
     ? trade.session
     : 'Other') as Trade['session'];
-  const result = (['Win', 'Loss', 'BE'].includes(trade.result)
+  const result = (['Win', 'Loss', 'BE', 'Missed'].includes(trade.result)
     ? trade.result
     : 'BE') as Trade['result'];
+  const pnlUnit = (['r', 'percent', 'money', 'value'].includes(String(trade.pnlUnit))
+    ? trade.pnlUnit
+    : 'r') as NonNullable<Trade['pnlUnit']>;
+  const riskUnit = (['r', 'percent', 'money', 'value'].includes(String(trade.riskUnit))
+    ? trade.riskUnit
+    : 'r') as NonNullable<Trade['riskUnit']>;
+  const currency =
+    (String(trade.currency || '$').trim() || '$').slice(0, VALIDATION_LIMITS.currencyMaxLength);
   const pair = (String(trade.pair || 'UNKNOWN').trim().toUpperCase() || 'UNKNOWN').slice(
     0,
     VALIDATION_LIMITS.tradePairMaxLength
@@ -137,6 +145,9 @@ function sanitizeTradePayload(uid: string, trade: Trade) {
     result,
     r: clampNumber(trade.r, VALIDATION_LIMITS.rMin, VALIDATION_LIMITS.rMax, 0),
     risk: clampNumber(trade.risk, VALIDATION_LIMITS.riskMin, VALIDATION_LIMITS.riskMax, 1),
+    pnlUnit,
+    riskUnit,
+    currency,
     model: String(trade.model || '').slice(0, VALIDATION_LIMITS.tradeModelMaxLength),
     tags: sanitizeTags(trade.tags),
     notes: String(trade.notes || '').slice(0, VALIDATION_LIMITS.tradeNotesMaxLength),
@@ -251,6 +262,21 @@ function sanitizeWorkspaceFields(
   const freq = VALIDATION_LIMITS.quoteFrequencies.includes(state.settings.quoteFrequency)
     ? state.settings.quoteFrequency
     : 60;
+  const defaultPnlUnit = (['r', 'percent', 'money', 'value'].includes(
+    String(state.settings.defaultPnlUnit)
+  )
+    ? state.settings.defaultPnlUnit
+    : 'r') as NonNullable<JournalSettings['defaultPnlUnit']>;
+  const defaultRiskUnit = (['r', 'percent', 'money', 'value'].includes(
+    String(state.settings.defaultRiskUnit)
+  )
+    ? state.settings.defaultRiskUnit
+    : 'r') as NonNullable<JournalSettings['defaultRiskUnit']>;
+  const currency =
+    (String(state.settings.currency || '$').trim() || '$').slice(
+      0,
+      VALIDATION_LIMITS.currencyMaxLength
+    );
   return {
     uid,
     displayName: String(state.profile.name || '').slice(0, VALIDATION_LIMITS.displayNameMaxLength),
@@ -280,6 +306,9 @@ function sanitizeWorkspaceFields(
     ),
     quoteFrequency: freq,
     quoteNotifications: Boolean(state.settings.quoteNotifications),
+    defaultPnlUnit,
+    defaultRiskUnit,
+    currency,
   };
 }
 
@@ -463,6 +492,9 @@ export async function cloudSaveTrade(uid: string, trade: Trade): Promise<void> {
       result: payload.result,
       r: payload.r,
       risk: payload.risk,
+      pnlUnit: payload.pnlUnit,
+      riskUnit: payload.riskUnit,
+      currency: payload.currency,
       model: payload.model,
       tags: payload.tags,
       notes: payload.notes,
@@ -667,10 +699,26 @@ export async function cloudSaveAlarmsAndSettings(
     ? settings.quoteFrequency
     : 60;
 
+  const defaultPnlUnit = (['r', 'percent', 'money', 'value'].includes(
+    String(settings.defaultPnlUnit)
+  )
+    ? settings.defaultPnlUnit
+    : 'r') as NonNullable<JournalSettings['defaultPnlUnit']>;
+  const defaultRiskUnit = (['r', 'percent', 'money', 'value'].includes(
+    String(settings.defaultRiskUnit)
+  )
+    ? settings.defaultRiskUnit
+    : 'r') as NonNullable<JournalSettings['defaultRiskUnit']>;
+  const currency =
+    (String(settings.currency || '$').trim() || '$').slice(0, VALIDATION_LIMITS.currencyMaxLength);
+
   try {
     await updateDoc(doc(db, 'users', uid), {
       quoteFrequency: freq,
       quoteNotifications: Boolean(settings.quoteNotifications),
+      defaultPnlUnit,
+      defaultRiskUnit,
+      currency,
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
@@ -767,6 +815,9 @@ export async function cloudReplaceFullJournal(uid: string, nextState: JournalSta
         playbookRisk: wsFields.playbookRisk,
         quoteFrequency: wsFields.quoteFrequency,
         quoteNotifications: wsFields.quoteNotifications,
+        defaultPnlUnit: wsFields.defaultPnlUnit,
+        defaultRiskUnit: wsFields.defaultRiskUnit,
+        currency: wsFields.currency,
         updatedAt: serverTimestamp(),
       });
     } else {
@@ -880,6 +931,18 @@ export function subscribeToCloudJournal(
           settings: {
             quoteFrequency: typeof d.quoteFrequency === 'number' ? d.quoteFrequency : 60,
             quoteNotifications: Boolean(d.quoteNotifications),
+            defaultPnlUnit: (['r', 'percent', 'money', 'value'].includes(String(d.defaultPnlUnit))
+              ? d.defaultPnlUnit
+              : 'r') as JournalSettings['defaultPnlUnit'],
+            defaultRiskUnit: (['r', 'percent', 'money', 'value'].includes(
+              String(d.defaultRiskUnit)
+            )
+              ? d.defaultRiskUnit
+              : 'r') as JournalSettings['defaultRiskUnit'],
+            currency:
+              typeof d.currency === 'string' && d.currency.trim()
+                ? d.currency.trim().slice(0, VALIDATION_LIMITS.currencyMaxLength)
+                : '$',
           },
         };
         ready.workspace = true;
@@ -902,9 +965,19 @@ export function subscribeToCloudJournal(
             direction: d.direction === 'Short' ? 'Short' : 'Long',
             setup: d.setup || 'Other',
             session: d.session || 'Other',
-            result: d.result || 'BE',
+            result: ['Win', 'Loss', 'BE', 'Missed'].includes(String(d.result)) ? d.result : 'BE',
             r: Number(d.r || 0),
             risk: Number(d.risk ?? 1),
+            pnlUnit: ['r', 'percent', 'money', 'value'].includes(String(d.pnlUnit))
+              ? d.pnlUnit
+              : 'r',
+            riskUnit: ['r', 'percent', 'money', 'value'].includes(String(d.riskUnit))
+              ? d.riskUnit
+              : 'r',
+            currency:
+              typeof d.currency === 'string' && d.currency.trim()
+                ? d.currency.trim().slice(0, VALIDATION_LIMITS.currencyMaxLength)
+                : '$',
             model: String(d.model || ''),
             tags: Array.isArray(d.tags) ? d.tags.map(String) : [],
             notes: String(d.notes || ''),

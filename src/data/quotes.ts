@@ -187,6 +187,12 @@ export function createDefaultState(): JournalState {
     playbookChecks: {},
     alarms: DEFAULT_ALARMS.map((a) => ({ ...a })),
     profile: { name: '', market: '' },
-    settings: { quoteFrequency: 60, quoteNotifications: false },
+    settings: {
+      quoteFrequency: 60,
+      quoteNotifications: false,
+      defaultPnlUnit: 'r',
+      defaultRiskUnit: 'r',
+      currency: '$',
+    },
   };
 }

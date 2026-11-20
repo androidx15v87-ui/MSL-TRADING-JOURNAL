@@ -1,4 +1,4 @@
-import type { JournalStats, Trade } from '../types/journal';
+import type { JournalStats, MetricUnit, Trade, UnitStatsBreakdown } from '../types/journal';
 
 export function generateId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -36,40 +36,224 @@ export function formatTime(isoString: string): string {
   return isoString.slice(11, 16);
 }
 
-export function formatR(value: number | undefined | null): string {
-  const num = Number(value || 0);
-  if (Object.is(num, -0)) return '0.00R';
-  return `${num > 0 ? '+' : ''}${num.toFixed(2)}R`;
+export function normalizeMetricUnit(raw: unknown, fallback: MetricUnit = 'r'): MetricUnit {
+  if (raw === 'r' || raw === 'percent' || raw === 'money' || raw === 'value') {
+    return raw;
+  }
+  return fallback;
 }
 
-export function calculateStats(trades: Trade[]): JournalStats {
-  const wins = trades.filter((t) => t.result === 'Win');
-  const losses = trades.filter((t) => t.result === 'Loss');
-  const breakevens = trades.filter((t) => t.result === 'BE');
+export function getUnitShortLabel(unit: MetricUnit = 'r', currency: string = '$'): string {
+  switch (unit) {
+    case 'percent':
+      return '%';
+    case 'money':
+      return (currency || '$').trim() || '$';
+    case 'value':
+      return 'Val';
+    case 'r':
+    default:
+      return 'R';
+  }
+}
 
-  const netR = trades.reduce((sum, t) => sum + Number(t.r || 0), 0);
-  const totalTrades = trades.length;
+export function getUnitLongLabel(unit: MetricUnit = 'r', currency: string = '$'): string {
+  switch (unit) {
+    case 'percent':
+      return 'Percentage (%)';
+    case 'money':
+      return `Money (${(currency || '$').trim() || '$'})`;
+    case 'value':
+      return 'Value / Points';
+    case 'r':
+    default:
+      return 'R-Multiple (Ratio)';
+  }
+}
 
-  // Prompt specification:
-  // - Win rate = wins / total trades
-  // - Expectancy = average R per trade, breakeven included
-  // - Profit factor = sum of winning R / absolute sum of losing R
-  // - Average winner / loser = mean R of winners / losers only
-  // - Best session = session with highest net R
+export function formatMetric(
+  value: number | undefined | null,
+  unit: MetricUnit = 'r',
+  currency: string = '$',
+  opts?: { signed?: boolean; decimals?: number }
+): string {
+  const raw = Number(value || 0);
+  const num = Object.is(raw, -0) || !Number.isFinite(raw) ? 0 : raw;
+  const signed = opts?.signed ?? true;
+  const decimals = opts?.decimals ?? 2;
+  const sign = signed && num > 0 ? '+' : num < 0 ? '-' : '';
+  const abs = Math.abs(num);
+  const curr = (currency || '$').trim() || '$';
+
+  if (unit === 'money') {
+    const formatted = abs.toLocaleString(undefined, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+    return `${sign}${curr}${formatted}`;
+  }
+
+  const fixed = abs >= 1000
+    ? abs.toLocaleString(undefined, {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+      })
+    : abs.toFixed(decimals);
+
+  if (unit === 'percent') {
+    return `${sign}${fixed}%`;
+  }
+  if (unit === 'value') {
+    return `${sign}${fixed}`;
+  }
+  return `${sign}${fixed}R`;
+}
+
+export function formatR(value: number | undefined | null): string {
+  return formatMetric(value, 'r', '$', { signed: true, decimals: 2 });
+}
+
+export function formatRisk(
+  value: number | undefined | null,
+  unit: MetricUnit = 'r',
+  currency: string = '$'
+): string {
+  return formatMetric(Math.abs(Number(value || 0)), unit, currency, {
+    signed: false,
+    decimals: 2,
+  });
+}
+
+export function formatTradePnL(
+  trade: Pick<Trade, 'r' | 'pnlUnit' | 'currency'>,
+  fallbackUnit: MetricUnit = 'r',
+  fallbackCurrency: string = '$'
+): string {
+  return formatMetric(
+    trade.r,
+    trade.pnlUnit || fallbackUnit,
+    trade.currency || fallbackCurrency,
+    { signed: true, decimals: 2 }
+  );
+}
+
+export function formatTradeRisk(
+  trade: Pick<Trade, 'risk' | 'riskUnit' | 'currency'>,
+  fallbackUnit: MetricUnit = 'r',
+  fallbackCurrency: string = '$'
+): string {
+  return formatRisk(
+    trade.risk,
+    trade.riskUnit || fallbackUnit,
+    trade.currency || fallbackCurrency
+  );
+}
+
+export interface CalculateStatsOptions {
+  unit?: MetricUnit;
+  defaultUnit?: MetricUnit;
+  defaultCurrency?: string;
+}
+
+export function calculateStats(
+  trades: Trade[],
+  options?: CalculateStatsOptions
+): JournalStats {
+  const missed = trades.filter((t) => t.result === 'Missed');
+  const executed = trades.filter((t) => t.result !== 'Missed');
+
+  const wins = executed.filter((t) => t.result === 'Win');
+  const losses = executed.filter((t) => t.result === 'Loss');
+  const breakevens = executed.filter((t) => t.result === 'BE');
+
+  const defaultCurrency = (options?.defaultCurrency || '$').trim() || '$';
+  const defaultUnit = options?.defaultUnit || 'r';
+
+  // Group executed trades by pnlUnit to keep numeric rollups mathematically pure
+  const unitMap = new Map<MetricUnit, { currency: string; trades: Trade[] }>();
+  for (const t of executed) {
+    const unit = normalizeMetricUnit(t.pnlUnit, 'r');
+    const existing = unitMap.get(unit);
+    if (existing) {
+      existing.trades.push(t);
+      if (unit === 'money' && t.currency) {
+        existing.currency = t.currency;
+      }
+    } else {
+      unitMap.set(unit, {
+        currency: t.currency || defaultCurrency,
+        trades: [t],
+      });
+    }
+  }
+
+  const unitBreakdown: UnitStatsBreakdown[] = Array.from(unitMap.entries())
+    .map(([unit, group]) => {
+      let net = 0;
+      let grossWin = 0;
+      let grossLoss = 0;
+      for (const t of group.trades) {
+        const val = Number(t.r || 0);
+        net += val;
+        if (t.result === 'Win' && val > 0) grossWin += val;
+        else if (t.result === 'Loss' && val < 0) grossLoss += Math.abs(val);
+        else if (val > 0) grossWin += val;
+        else if (val < 0) grossLoss += Math.abs(val);
+      }
+      return {
+        unit,
+        currency: group.currency,
+        count: group.trades.length,
+        net,
+        grossWin,
+        grossLoss,
+      };
+    })
+    .sort((a, b) => b.count - a.count);
+
+  const isMixedUnits = unitBreakdown.length > 1;
+  const requestedUnit = options?.unit;
+  const primaryUnit: MetricUnit =
+    requestedUnit && unitMap.has(requestedUnit)
+      ? requestedUnit
+      : unitBreakdown.find((b) => b.unit === defaultUnit)?.unit ||
+        unitBreakdown[0]?.unit ||
+        requestedUnit ||
+        defaultUnit;
+
+  const primaryCurrency = unitMap.get(primaryUnit)?.currency || defaultCurrency;
+  const unitTrades =
+    isMixedUnits && unitMap.has(primaryUnit)
+      ? unitMap.get(primaryUnit)!.trades
+      : executed;
+
+  const unitWins = unitTrades.filter((t) => t.result === 'Win');
+  const unitLosses = unitTrades.filter((t) => t.result === 'Loss');
+
+  const netR = unitTrades.reduce((sum, t) => sum + Number(t.r || 0), 0);
+  const totalTrades = executed.length;
+  const unitTradeCount = unitTrades.length;
+
   const winRate = totalTrades > 0 ? (wins.length / totalTrades) * 100 : 0;
-  const expectancy = totalTrades > 0 ? netR / totalTrades : 0;
+  const expectancy = unitTradeCount > 0 ? netR / unitTradeCount : 0;
 
-  const grossWin = wins.reduce((sum, t) => sum + Math.max(0, Number(t.r || 0)), 0);
-  const grossLoss = Math.abs(losses.reduce((sum, t) => sum + Math.min(0, Number(t.r || 0)), 0));
+  const grossWin = unitWins.reduce((sum, t) => sum + Math.max(0, Number(t.r || 0)), 0);
+  const grossLoss = Math.abs(unitLosses.reduce((sum, t) => sum + Math.min(0, Number(t.r || 0)), 0));
   const profitFactor = grossLoss > 0 ? grossWin / grossLoss : grossWin > 0 ? Infinity : 0;
 
   const avgWinner =
-    wins.length > 0 ? wins.reduce((sum, t) => sum + Number(t.r || 0), 0) / wins.length : 0;
+    unitWins.length > 0
+      ? unitWins.reduce((sum, t) => sum + Number(t.r || 0), 0) / unitWins.length
+      : 0;
   const avgLoser =
-    losses.length > 0 ? losses.reduce((sum, t) => sum + Number(t.r || 0), 0) / losses.length : 0;
+    unitLosses.length > 0
+      ? unitLosses.reduce((sum, t) => sum + Number(t.r || 0), 0) / unitLosses.length
+      : 0;
+
+  const missedOpportunityR = missed.reduce((sum, t) => sum + Number(t.r || 0), 0);
 
   const sessionMap = new Map<string, number>();
-  for (const t of trades) {
+  for (const t of unitTrades) {
     const key = t.session || 'Other';
     sessionMap.set(key, (sessionMap.get(key) || 0) + Number(t.r || 0));
   }
@@ -81,21 +265,16 @@ export function calculateStats(trades: Trade[]): JournalStats {
     }
   }
 
-  // Chronological metrics: max drawdown (R), win/loss streaks, best/worst trade
-  const ordered = [...trades].sort((a, b) => a.date.localeCompare(b.date));
+  // Chronological drawdown & best/worst trade within primary unit
+  const orderedUnit = [...unitTrades].sort((a, b) => a.date.localeCompare(b.date));
   let peak = 0;
   let equity = 0;
   let maxDrawdownR = 0;
   let bestTradeR = 0;
   let worstTradeR = 0;
-  let bestWinStreak = 0;
-  let runningWinStreak = 0;
-  let currentType: 'Win' | 'Loss' | 'None' = 'None';
-  let currentCount = 0;
 
-  for (let i = 0; i < ordered.length; i++) {
-    const t = ordered[i];
-    const rVal = Number(t.r || 0);
+  for (let i = 0; i < orderedUnit.length; i++) {
+    const rVal = Number(orderedUnit[i].r || 0);
     if (i === 0 || rVal > bestTradeR) bestTradeR = rVal;
     if (i === 0 || rVal < worstTradeR) worstTradeR = rVal;
 
@@ -103,17 +282,25 @@ export function calculateStats(trades: Trade[]): JournalStats {
     if (equity > peak) peak = equity;
     const dd = peak - equity;
     if (dd > maxDrawdownR) maxDrawdownR = dd;
+  }
 
+  // Chronological streaks across all executed trades (Missed trades do not break or extend execution streaks)
+  const orderedExecuted = [...executed].sort((a, b) => a.date.localeCompare(b.date));
+  let bestWinStreak = 0;
+  let runningWinStreak = 0;
+  let currentType: 'Win' | 'Loss' | 'None' = 'None';
+  let currentCount = 0;
+
+  for (let i = 0; i < orderedExecuted.length; i++) {
+    const t = orderedExecuted[i];
     if (t.result === 'Win') {
       runningWinStreak += 1;
       if (runningWinStreak > bestWinStreak) bestWinStreak = runningWinStreak;
-      currentType = currentType === 'Win' ? 'Win' : 'Win';
-      currentCount = currentType === 'Win' && i > 0 && ordered[i - 1].result === 'Win'
-        ? currentCount + 1
-        : 1;
+      currentCount = currentType === 'Win' ? currentCount + 1 : 1;
+      currentType = 'Win';
     } else if (t.result === 'Loss') {
       runningWinStreak = 0;
-      currentCount = i > 0 && ordered[i - 1].result === 'Loss' ? currentCount + 1 : 1;
+      currentCount = currentType === 'Loss' ? currentCount + 1 : 1;
       currentType = 'Loss';
     } else {
       runningWinStreak = 0;
@@ -124,9 +311,16 @@ export function calculateStats(trades: Trade[]): JournalStats {
 
   return {
     totalTrades,
+    allLoggedCount: trades.length,
     wins,
     losses,
     breakevens,
+    missed,
+    missedOpportunityR,
+    primaryUnit,
+    primaryCurrency,
+    isMixedUnits,
+    unitBreakdown,
     netR,
     winRate,
     expectancy,
@@ -153,11 +347,14 @@ export interface GroupPerformance {
 
 export function groupPerformance(
   trades: Trade[],
-  key: 'setup' | 'session' | 'direction'
+  key: 'setup' | 'session' | 'direction',
+  unitFilter?: MetricUnit
 ): GroupPerformance[] {
   const map = new Map<string, { netR: number; count: number; wins: number }>();
 
   for (const t of trades) {
+    if (t.result === 'Missed') continue;
+    if (unitFilter && normalizeMetricUnit(t.pnlUnit, 'r') !== unitFilter) continue;
     const label = String(t[key] || 'Unspecified');
     const prev = map.get(label) || { netR: 0, count: 0, wins: 0 };
     map.set(label, {
@@ -177,10 +374,15 @@ export function groupPerformance(
     .sort((a, b) => b.netR - a.netR);
 }
 
-export function groupPerformanceByTag(trades: Trade[]): GroupPerformance[] {
+export function groupPerformanceByTag(
+  trades: Trade[],
+  unitFilter?: MetricUnit
+): GroupPerformance[] {
   const map = new Map<string, { netR: number; count: number; wins: number }>();
 
   for (const t of trades) {
+    if (t.result === 'Missed') continue;
+    if (unitFilter && normalizeMetricUnit(t.pnlUnit, 'r') !== unitFilter) continue;
     const tags = Array.isArray(t.tags) ? t.tags : [];
     for (const rawTag of tags) {
       const label = rawTag.trim();
@@ -344,7 +546,8 @@ export interface MonthlyPnLPoint {
 export function calculateMonthlyPnL(
   trades: Trade[],
   monthsCount: number = 6,
-  referenceDate: Date = new Date()
+  referenceDate: Date = new Date(),
+  unitFilter?: MetricUnit
 ): MonthlyPnLPoint[] {
   const buckets: {
     monthKey: string;
@@ -372,6 +575,8 @@ export function calculateMonthlyPnL(
   const bucketMap = new Map(buckets.map((b) => [b.monthKey, b]));
 
   for (const t of trades) {
+    if (t.result === 'Missed') continue;
+    if (unitFilter && normalizeMetricUnit(t.pnlUnit, 'r') !== unitFilter) continue;
     const key = (t.date || '').slice(0, 7);
     const bucket = bucketMap.get(key);
     if (!bucket) continue;

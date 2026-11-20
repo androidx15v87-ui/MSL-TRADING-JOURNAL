@@ -55,6 +55,22 @@
           "type": "boolean",
           "description": "Whether motivational quote notifications are enabled."
         },
+        "defaultPnlUnit": {
+          "type": "string",
+          "enum": ["r", "percent", "money", "value"],
+          "description": "Default P&L display/entry unit across the workspace."
+        },
+        "defaultRiskUnit": {
+          "type": "string",
+          "enum": ["r", "percent", "money", "value"],
+          "description": "Default risk unit across the workspace."
+        },
+        "currency": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8,
+          "description": "Preferred currency symbol for money-unit logging."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -123,13 +139,26 @@
         },
         "result": {
           "type": "string",
-          "enum": ["Win", "Loss", "BE"]
+          "enum": ["Win", "Loss", "BE", "Missed"]
         },
         "r": {
           "type": "number"
         },
         "risk": {
           "type": "number"
+        },
+        "pnlUnit": {
+          "type": "string",
+          "enum": ["r", "percent", "money", "value"]
+        },
+        "riskUnit": {
+          "type": "string",
+          "enum": ["r", "percent", "money", "value"]
+        },
+        "currency": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8
         },
         "model": {
           "type": "string",

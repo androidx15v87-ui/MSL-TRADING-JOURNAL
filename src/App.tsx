@@ -25,11 +25,14 @@ import {
 } from './lib/appLock';
 import { createDefaultState, QUOTES, type QuoteItem } from './data/quotes';
 import {
-  formatR,
+  formatTradePnL,
+  formatTradeRisk,
   generateId,
   getAllTradeTags,
+  getUnitShortLabel,
   isoDate,
   localDateTime,
+  normalizeMetricUnit,
 } from './lib/calculations';
 import {
   loadAIMemories,
@@ -161,6 +164,7 @@ function normalizeSession(val: unknown): SessionType {
 
 function normalizeOutcome(val: unknown): TradeOutcome {
   const lower = String(val || '').toLowerCase();
+  if (lower.includes('miss')) return 'Missed';
   if (lower.startsWith('l')) return 'Loss';
   if (lower === 'be' || lower.includes('break')) return 'BE';
   return 'Win';
@@ -797,6 +801,19 @@ export default function App() {
             });
           } else if (action.name === 'log_trade') {
             const nowIso = new Date().toISOString();
+            const curSettings = stateRef.current.settings;
+            const pnlUnit = normalizeMetricUnit(
+              action.args.pnlUnit,
+              curSettings.defaultPnlUnit || 'r'
+            );
+            const riskUnit = normalizeMetricUnit(
+              action.args.riskUnit,
+              curSettings.defaultRiskUnit || 'r'
+            );
+            const currency =
+              typeof action.args.currency === 'string' && action.args.currency.trim()
+                ? action.args.currency.trim().slice(0, 8)
+                : curSettings.currency || '$';
             const newTrade: Trade = {
               id: generateId(),
               date:
@@ -810,9 +827,12 @@ export default function App() {
               result: normalizeOutcome(action.args.result),
               r: Number.isFinite(Number(action.args.r)) ? Number(action.args.r) : 0,
               risk:
-                Number.isFinite(Number(action.args.risk)) && Number(action.args.risk) > 0
+                Number.isFinite(Number(action.args.risk)) && Number(action.args.risk) >= 0
                   ? Number(action.args.risk)
                   : 1,
+              pnlUnit,
+              riskUnit,
+              currency,
               model: String(action.args.model || '').trim(),
               tags: Array.isArray(action.args.tags)
                 ? action.args.tags.map((t) => String(t).trim()).filter(Boolean)
@@ -832,7 +852,7 @@ export default function App() {
             if (activeUser) {
               await cloudSaveTrade(activeUser.uid, newTrade).catch(() => {});
             }
-            const label = `Logged ${newTrade.pair} ${newTrade.direction} (${formatR(newTrade.r)})`;
+            const label = `Logged ${newTrade.pair} ${newTrade.direction} (${newTrade.result} ${formatTradePnL(newTrade)})`;
             results.push({ name: action.name, label, ok: true });
             showToast(`KAIROS: ${label}`);
           } else if (action.name === 'update_trade') {
@@ -867,6 +887,16 @@ export default function App() {
                 action.args.risk !== undefined && Number.isFinite(Number(action.args.risk))
                   ? Number(action.args.risk)
                   : existing.risk,
+              pnlUnit: action.args.pnlUnit
+                ? normalizeMetricUnit(action.args.pnlUnit, existing.pnlUnit || 'r')
+                : existing.pnlUnit,
+              riskUnit: action.args.riskUnit
+                ? normalizeMetricUnit(action.args.riskUnit, existing.riskUnit || 'r')
+                : existing.riskUnit,
+              currency:
+                typeof action.args.currency === 'string' && action.args.currency.trim()
+                  ? action.args.currency.trim().slice(0, 8)
+                  : existing.currency,
               model: action.args.model !== undefined ? String(action.args.model) : existing.model,
               tags: Array.isArray(action.args.tags)
                 ? action.args.tags.map((t) => String(t).trim()).filter(Boolean)
@@ -882,7 +912,7 @@ export default function App() {
             if (activeUser) {
               await cloudSaveTrade(activeUser.uid, updated).catch(() => {});
             }
-            const label = `Updated ${updated.pair} (${formatR(updated.r)})`;
+            const label = `Updated ${updated.pair} (${updated.result} ${formatTradePnL(updated)})`;
             results.push({ name: action.name, label, ok: true });
             showToast(`KAIROS: ${label}`);
           } else if (action.name === 'delete_trade') {
@@ -904,7 +934,7 @@ export default function App() {
             if (activeUser) {
               await cloudDeleteTrade(activeUser.uid, targetId).catch(() => {});
             }
-            const label = `Deleted ${existing.pair} (${formatR(existing.r)})`;
+            const label = `Deleted ${existing.pair} (${formatTradePnL(existing)})`;
             results.push({ name: action.name, label, ok: true });
             showToast(`KAIROS: ${label}`);
           } else if (action.name === 'create_trading_model') {
@@ -1090,7 +1120,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `MSL-Journal-v10.5.4-backup-${isoDate(new Date())}.json`;
+    a.download = `MSL-Journal-v10.6.9-backup-${isoDate(new Date())}.json`;
     a.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     showToast('Full backup downloaded.');
@@ -1104,8 +1134,10 @@ export default function App() {
       'Setup',
       'Session',
       'Outcome',
-      'R Multiple',
-      'Risk (R)',
+      'Profit / Loss',
+      'P&L Unit',
+      'Risk',
+      'Risk Unit',
       'Model',
       'Tags',
       'Notes',
@@ -1119,8 +1151,10 @@ export default function App() {
         t.setup,
         t.session,
         t.result,
-        formatR(t.r),
-        String(t.risk ?? 1),
+        formatTradePnL(t, state.settings.defaultPnlUnit, state.settings.currency),
+        getUnitShortLabel(t.pnlUnit || state.settings.defaultPnlUnit || 'r', t.currency || state.settings.currency),
+        formatTradeRisk(t, state.settings.defaultRiskUnit, state.settings.currency),
+        getUnitShortLabel(t.riskUnit || state.settings.defaultRiskUnit || 'r', t.currency || state.settings.currency),
         t.model || '',
         Array.isArray(t.tags) ? t.tags.join('; ') : '',
         t.notes || '',
@@ -1460,6 +1494,7 @@ export default function App() {
                     <OverviewScreen
                       trades={state.trades}
                       alarms={state.alarms}
+                      settings={state.settings}
                       quote={quote}
                       onNextQuote={handleCycleQuote}
                       onCopyQuote={handleCopyQuote}
@@ -1472,6 +1507,7 @@ export default function App() {
                   {activePage === 'journal' && (
                     <JournalScreen
                       trades={state.trades}
+                      settings={state.settings}
                       onOpenNewTrade={() => handleOpenNewTrade()}
                       onSelectTrade={(t) => setViewingTrade(t)}
                       onExportBackup={handleDownloadBackup}
@@ -1482,6 +1518,7 @@ export default function App() {
                   {activePage === 'calendar' && (
                     <CalendarScreen
                       trades={state.trades}
+                      settings={state.settings}
                       onLogTradeForDate={(dateIso) => handleOpenNewTrade(dateIso)}
                       onSelectTrade={(t) => setViewingTrade(t)}
                     />
@@ -1501,6 +1538,7 @@ export default function App() {
                   {activePage === 'analytics' && (
                     <AnalyticsScreen
                       trades={state.trades}
+                      settings={state.settings}
                       onSelectTrade={(t) => setViewingTrade(t)}
                     />
                   )}
@@ -1549,6 +1587,7 @@ export default function App() {
         draftTemplate={draftTemplate}
         initialDate={modalInitialDate}
         defaultMarket={state.profile.market}
+        settings={state.settings}
         models={state.models}
         fields={state.fields}
         existingTags={existingTags}
@@ -1567,6 +1606,7 @@ export default function App() {
       <TradeDetailModal
         trade={viewingTrade}
         fields={state.fields}
+        settings={state.settings}
         onClose={() => setViewingTrade(null)}
         onEdit={handleEditTrade}
         onDuplicate={handleDuplicateTrade}
@@ -1580,7 +1620,7 @@ export default function App() {
         title="Delete trade permanently?"
         description={
           tradeToDelete
-            ? `Remove ${tradeToDelete.pair} (${formatR(tradeToDelete.r)}) and its attached screenshots from this device?`
+            ? `Remove ${tradeToDelete.pair} (${formatTradePnL(tradeToDelete, state.settings.defaultPnlUnit, state.settings.currency)}) and its attached screenshots from this device?`
             : ''
         }
         confirmLabel="Delete trade"

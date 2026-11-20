@@ -109,9 +109,18 @@ function normalizeTrade(raw: Partial<Trade> & { id?: string }): Trade {
     session: (['London', 'New York', 'Asia', 'Overlap', 'Other'].includes(String(raw.session))
       ? raw.session
       : 'Other') as Trade['session'],
-    result: (['Win', 'Loss', 'BE'].includes(String(raw.result)) ? raw.result : 'BE') as Trade['result'],
+    result: (['Win', 'Loss', 'BE', 'Missed'].includes(String(raw.result))
+      ? raw.result
+      : 'BE') as Trade['result'],
     r: Number(raw.r || 0),
     risk: Number(raw.risk ?? 1),
+    pnlUnit: (['r', 'percent', 'money', 'value'].includes(String(raw.pnlUnit))
+      ? raw.pnlUnit
+      : 'r') as Trade['pnlUnit'],
+    riskUnit: (['r', 'percent', 'money', 'value'].includes(String(raw.riskUnit))
+      ? raw.riskUnit
+      : 'r') as Trade['riskUnit'],
+    currency: typeof raw.currency === 'string' && raw.currency.trim() ? raw.currency.trim().slice(0, 8) : '$',
     model: String(raw.model || ''),
     tags: Array.isArray(raw.tags)
       ? Array.from(
@@ -172,6 +181,20 @@ function normalizeState(raw: Partial<JournalState> | null | undefined): JournalS
       quoteFrequency:
         typeof raw.settings?.quoteFrequency === 'number' ? raw.settings.quoteFrequency : 60,
       quoteNotifications: Boolean(raw.settings?.quoteNotifications),
+      defaultPnlUnit: (['r', 'percent', 'money', 'value'].includes(
+        String(raw.settings?.defaultPnlUnit)
+      )
+        ? raw.settings?.defaultPnlUnit
+        : 'r') as JournalSettings['defaultPnlUnit'],
+      defaultRiskUnit: (['r', 'percent', 'money', 'value'].includes(
+        String(raw.settings?.defaultRiskUnit)
+      )
+        ? raw.settings?.defaultRiskUnit
+        : 'r') as JournalSettings['defaultRiskUnit'],
+      currency:
+        typeof raw.settings?.currency === 'string' && raw.settings.currency.trim()
+          ? raw.settings.currency.trim().slice(0, 8)
+          : '$',
     },
   };
 }

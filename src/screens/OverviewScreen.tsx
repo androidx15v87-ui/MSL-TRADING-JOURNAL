@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ArrowUpRight, Bell, Bot, CalendarDays, Copy, Plus, RefreshCw } from 'lucide-react';
 import {
   Bar,
@@ -17,16 +17,21 @@ import {
   calculateMonthlyPnL,
   calculateStats,
   formatDate,
-  formatR,
+  formatMetric,
+  formatTradePnL,
+  getUnitLongLabel,
+  getUnitShortLabel,
   groupPerformanceByTag,
   isoDate,
+  normalizeMetricUnit,
   type MonthlyPnLPoint,
 } from '../lib/calculations';
-import type { PageId, SessionAlarm, Trade } from '../types/journal';
+import type { JournalSettings, MetricUnit, PageId, SessionAlarm, Trade } from '../types/journal';
 
 interface OverviewScreenProps {
   trades: Trade[];
   alarms: SessionAlarm[];
+  settings?: JournalSettings;
   quote: QuoteItem;
   onNextQuote: () => void;
   onCopyQuote: () => void;
@@ -38,6 +43,7 @@ interface OverviewScreenProps {
 export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
   trades,
   alarms,
+  settings,
   quote,
   onNextQuote,
   onCopyQuote,
@@ -45,7 +51,22 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
   onNavigate,
   onSelectTrade,
 }) => {
-  const stats = useMemo(() => calculateStats(trades), [trades]);
+  const [selectedUnit, setSelectedUnit] = useState<MetricUnit | undefined>(undefined);
+
+  const stats = useMemo(
+    () =>
+      calculateStats(trades, {
+        unit: selectedUnit,
+        defaultUnit: settings?.defaultPnlUnit,
+        defaultCurrency: settings?.currency,
+      }),
+    [trades, selectedUnit, settings?.defaultPnlUnit, settings?.currency]
+  );
+
+  const activeUnit = stats.primaryUnit;
+  const activeCurrency = stats.primaryCurrency;
+  const unitShort = getUnitShortLabel(activeUnit, activeCurrency);
+  const unitFilter = stats.isMixedUnits ? activeUnit : undefined;
 
   const recentTrades = useMemo(
     () => [...trades].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6),
@@ -77,28 +98,46 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
       const d = new Date(`${t.date.slice(0, 10)}T12:00:00`);
       return d.getFullYear() === year && d.getMonth() === month;
     });
+    const executedMonth = monthTrades.filter((t) => t.result !== 'Missed');
 
     const days = Array.from({ length: daysInMonth }, (_, i) => {
       const d = new Date(year, month, i + 1);
       const key = isoDate(d);
       const dayTrades = monthTrades.filter((t) => t.date.slice(0, 10) === key);
-      const net = dayTrades.reduce((acc, t) => acc + Number(t.r || 0), 0);
+      const dayExecuted = dayTrades.filter((t) => t.result !== 'Missed');
+      const dayMissed = dayTrades.filter((t) => t.result === 'Missed');
+      const unitTrades =
+        unitFilter
+          ? dayExecuted.filter((t) => normalizeMetricUnit(t.pnlUnit, 'r') === unitFilter)
+          : dayExecuted;
+      const net = unitTrades.reduce((acc, t) => acc + Number(t.r || 0), 0);
+      const dayUnit =
+        unitTrades[0]?.pnlUnit || dayExecuted[0]?.pnlUnit || activeUnit;
+      const dayCurrency =
+        unitTrades[0]?.currency || dayExecuted[0]?.currency || activeCurrency;
       return {
         key,
         day: i + 1,
-        count: dayTrades.length,
+        count: dayExecuted.length,
+        missedCount: dayMissed.length,
         net,
+        dayUnit,
+        dayCurrency,
       };
     });
 
     return {
       monthLabel: now.toLocaleDateString(undefined, { month: 'long' }),
-      totalCount: monthTrades.length,
+      totalCount: executedMonth.length,
+      missedCount: monthTrades.length - executedMonth.length,
       days,
     };
-  }, [trades]);
+  }, [trades, unitFilter, activeUnit, activeCurrency]);
 
-  const monthlyPnL = useMemo(() => calculateMonthlyPnL(trades, 6), [trades]);
+  const monthlyPnL = useMemo(
+    () => calculateMonthlyPnL(trades, 6, new Date(), unitFilter),
+    [trades, unitFilter]
+  );
 
   const sixMonthSummary = useMemo(() => {
     const totalR = monthlyPnL.reduce((sum, m) => sum + m.netR, 0);
@@ -111,9 +150,9 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
   }, [monthlyPnL]);
 
   const topTagEdge = useMemo(() => {
-    const grouped = groupPerformanceByTag(trades);
+    const grouped = groupPerformanceByTag(trades, unitFilter);
     return grouped.length > 0 ? grouped[0] : null;
-  }, [trades]);
+  }, [trades, unitFilter]);
 
   const profitFactorLabel =
     stats.profitFactor === Infinity ? '∞' : stats.profitFactor.toFixed(2);
@@ -163,10 +202,16 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
 
           {/* Geometric Candlestick & Equity Trajectory Artwork */}
           <div className="hidden lg:flex lg:col-span-5 justify-end">
-            <div className="relative w-full max-w-[300px] h-44 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4 flex flex-col justify-between">
+            <div className="relative w-full max-w-[300px] h-44 rounded-2xl border border-white/[0.1] bg-white/[0.03] p-4 flex flex-col justify-between shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
               <div className="flex items-center justify-between text-xs text-[#8b9ab0]">
                 <span className="font-medium">Execution rhythm</span>
-                <span className="font-mono font-semibold text-[#47dca0] tabular-nums">{formatR(stats.netR)}</span>
+                <span
+                  className={`font-mono font-semibold tabular-nums ${
+                    stats.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
+                  }`}
+                >
+                  {formatMetric(stats.netR, activeUnit, activeCurrency)}
+                </span>
               </div>
               <svg viewBox="0 0 260 96" className="w-full h-24 overflow-visible" aria-hidden="true">
                 <line x1="0" y1="74" x2="260" y2="74" stroke="#1b283e" strokeWidth="1" />
@@ -214,12 +259,47 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
               </svg>
               <div className="flex items-center justify-between text-xs text-[#8b9ab0] tabular-nums">
                 <span>{Math.round(stats.winRate)}% win rate</span>
-                <span>{stats.totalTrades} {stats.totalTrades === 1 ? 'trade' : 'trades'}</span>
+                <span>
+                  {stats.totalTrades} {stats.totalTrades === 1 ? 'trade' : 'trades'}
+                  {stats.missed.length > 0 ? ` · ${stats.missed.length} missed` : ''}
+                </span>
               </div>
             </div>
           </div>
         </div>
       </section>
+
+      {/* Unit Switcher Bar (shown when account contains multiple P&L units) */}
+      {stats.unitBreakdown.length > 1 && (
+        <div className="rounded-2xl glass-subcard px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-xs text-[#8b9ab0]">
+            Viewing metrics in{' '}
+            <strong className="text-[#eef3fb]">
+              {getUnitLongLabel(activeUnit, activeCurrency)}
+            </strong>{' '}
+            to keep cross-unit math exact.
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {stats.unitBreakdown.map((item) => {
+              const active = item.unit === activeUnit;
+              return (
+                <button
+                  key={item.unit}
+                  type="button"
+                  onClick={() => setSelectedUnit(item.unit)}
+                  className={`min-h-[34px] rounded-xl px-3 py-1 text-xs font-semibold border transition tabular-nums ${
+                    active
+                      ? 'bg-[#47dca0]/18 border-[#47dca0]/55 text-[#8df0c0]'
+                      : 'glass-subcard text-[#9aa8be] hover:text-[#eef3fb]'
+                  }`}
+                >
+                  {getUnitShortLabel(item.unit, item.currency)} · {item.count}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 4 Core KPI Stat Cards */}
       <section aria-label="Performance metrics" className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
@@ -230,11 +310,21 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
               stats.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
             }`}
           >
-            {formatR(stats.netR)}
+            {formatMetric(stats.netR, activeUnit, activeCurrency)}
           </p>
           <p className="mt-1.5 text-xs text-[#7989a1] tabular-nums">
-            <span className="text-[#47dca0]">+{stats.grossWin.toFixed(1)}R</span> profit ·{' '}
-            <span className="text-[#ff7d91]">-{stats.grossLoss.toFixed(1)}R</span> loss
+            <span className="text-[#47dca0]">
+              {formatMetric(stats.grossWin, activeUnit, activeCurrency, {
+                decimals: activeUnit === 'money' ? 0 : 1,
+              })}
+            </span>{' '}
+            profit ·{' '}
+            <span className="text-[#ff7d91]">
+              {formatMetric(-stats.grossLoss, activeUnit, activeCurrency, {
+                decimals: activeUnit === 'money' ? 0 : 1,
+              })}
+            </span>{' '}
+            loss
           </p>
         </article>
 
@@ -252,6 +342,9 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
           <p className="mt-1.5 text-xs text-[#7989a1] tabular-nums">
             {stats.wins.length} wins · {stats.losses.length} losses
             {stats.breakevens.length > 0 ? ` · ${stats.breakevens.length} BE` : ''}
+            {stats.missed.length > 0 && (
+              <span className="text-[#f5cc79]"> · {stats.missed.length} missed</span>
+            )}
           </p>
         </article>
 
@@ -266,9 +359,11 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
                 : 'text-[#eef3fb]'
             }`}
           >
-            {formatR(stats.expectancy)}
+            {formatMetric(stats.expectancy, activeUnit, activeCurrency)}
           </p>
-          <p className="mt-1.5 text-xs text-[#7989a1]">Avg R per trade (BE incl.)</p>
+          <p className="mt-1.5 text-xs text-[#7989a1]">
+            Avg {unitShort} per executed trade
+          </p>
         </article>
 
         <article className="rounded-2xl glass-card p-4 sm:p-5">
@@ -277,7 +372,14 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
             {profitFactorLabel}
           </p>
           <p className="mt-1.5 text-xs text-[#7989a1] tabular-nums">
-            +{stats.grossWin.toFixed(1)}R ÷ {stats.grossLoss.toFixed(1)}R
+            {formatMetric(stats.grossWin, activeUnit, activeCurrency, {
+              decimals: activeUnit === 'money' ? 0 : 1,
+            })}{' '}
+            ÷{' '}
+            {formatMetric(stats.grossLoss, activeUnit, activeCurrency, {
+              signed: false,
+              decimals: activeUnit === 'money' ? 0 : 1,
+            })}
           </p>
         </article>
       </section>
@@ -289,7 +391,9 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
             <p className="text-xs font-medium text-[#8df0c0]">
               6-month growth
             </p>
-            <h3 className="text-base font-bold text-[#eef3fb]">Monthly PnL summary (Net R)</h3>
+            <h3 className="text-base font-bold text-[#eef3fb]">
+              Monthly PnL summary (Net {unitShort})
+            </h3>
           </div>
           <div className="flex flex-wrap items-center gap-4 text-xs">
             <span className="text-[#8b9ab0] tabular-nums">
@@ -299,14 +403,15 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
                   sixMonthSummary.totalR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
                 }`}
               >
-                {formatR(sixMonthSummary.totalR)}
+                {formatMetric(sixMonthSummary.totalR, activeUnit, activeCurrency)}
               </strong>
             </span>
             {sixMonthSummary.best && (
               <span className="text-[#8b9ab0] tabular-nums">
                 Best month:{' '}
                 <strong className="font-mono text-[#8df0c0]">
-                  {sixMonthSummary.best.label} ({formatR(sixMonthSummary.best.netR)})
+                  {sixMonthSummary.best.label} (
+                  {formatMetric(sixMonthSummary.best.netR, activeUnit, activeCurrency)})
                 </strong>
               </span>
             )}
@@ -315,7 +420,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
 
         <div className="mt-4 h-60 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={monthlyPnL} margin={{ top: 10, right: 12, left: -14, bottom: 0 }}>
+            <ComposedChart data={monthlyPnL} margin={{ top: 10, right: 12, left: -10, bottom: 0 }}>
               <CartesianGrid stroke="rgba(255,255,255,0.06)" strokeDasharray="3 3" vertical={false} />
               <XAxis
                 dataKey="label"
@@ -327,7 +432,11 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
                 tick={{ fill: '#8b9ab0', fontSize: 11, fontFamily: 'JetBrains Mono' }}
                 axisLine={false}
                 tickLine={false}
-                tickFormatter={(v: number) => `${v > 0 ? '+' : ''}${v}R`}
+                tickFormatter={(v: number) =>
+                  formatMetric(v, activeUnit, activeCurrency, {
+                    decimals: activeUnit === 'money' ? 0 : 1,
+                  })
+                }
               />
               <ReferenceLine y={0} stroke="rgba(255,255,255,0.18)" />
               <Tooltip
@@ -345,13 +454,13 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
                             point.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
                           }`}
                         >
-                          {formatR(point.netR)}
+                          {formatMetric(point.netR, activeUnit, activeCurrency)}
                         </span>
                       </p>
                       <p className="text-[#9aa8be] tabular-nums">
                         6M Cumulative:{' '}
                         <span className="font-mono font-semibold text-[#8ebeff]">
-                          {formatR(point.cumulativeR)}
+                          {formatMetric(point.cumulativeR, activeUnit, activeCurrency)}
                         </span>
                       </p>
                       <p className="text-[#7f8fa8] tabular-nums">
@@ -394,7 +503,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
           <div className="flex items-center gap-4">
             <span className="inline-flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-sm bg-[#47dca0]" />
-              Monthly net R
+              Monthly net {unitShort}
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="h-0.5 w-3.5 bg-[#8ebeff]" />
@@ -403,8 +512,8 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
           </div>
           <span>
             {sixMonthSummary.totalTrades === 0
-              ? 'Log trades to plot your 6-month net R trajectory'
-              : `${sixMonthSummary.totalTrades} trades in the last 6 months`}
+              ? `Log executed trades to plot your 6-month ${unitShort} trajectory`
+              : `${sixMonthSummary.totalTrades} executed trades in the last 6 months`}
           </span>
         </div>
       </section>
@@ -434,7 +543,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
               <div className="py-10 text-center space-y-3">
                 <p className="text-sm font-medium text-[#9aa8be]">Your trade history will appear here.</p>
                 <p className="text-xs text-[#6e7e98]">
-                  Log your first execution to track R performance and statistics.
+                  Log your first execution or missed setup to build your performance evidence.
                 </p>
                 <div className="pt-1">
                   <button
@@ -454,6 +563,8 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
                     ? 'text-[#47dca0]'
                     : t.result === 'Loss'
                     ? 'text-[#ff7d91]'
+                    : t.result === 'Missed'
+                    ? 'text-[#f5cc79]'
                     : 'text-[#8ebeff]';
                 const tradeTags = Array.isArray(t.tags) ? t.tags.filter(Boolean) : [];
                 return (
@@ -480,9 +591,15 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
                     </div>
                     <div className="text-right shrink-0">
                       <p className={`font-mono text-sm font-bold tabular-nums ${outcomeColor}`}>
-                        {formatR(t.r)}
+                        {formatTradePnL(t, settings?.defaultPnlUnit, settings?.currency)}
                       </p>
-                      <p className="text-[11px] text-[#7c8ca6]">{t.result}</p>
+                      <p
+                        className={`text-[11px] font-semibold ${
+                          t.result === 'Missed' ? 'text-[#f5cc79]' : 'text-[#7c8ca6]'
+                        }`}
+                      >
+                        {t.result}
+                      </p>
                     </div>
                   </button>
                 );
@@ -509,7 +626,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
                 <span className="font-semibold text-[#eef3fb] tabular-nums">
                   #{topTagEdge.label}{' '}
                   <span className={topTagEdge.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'}>
-                    ({formatR(topTagEdge.netR)})
+                    ({formatMetric(topTagEdge.netR, activeUnit, activeCurrency)})
                   </span>
                 </span>
               </div>
@@ -607,12 +724,18 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
             </button>
           </div>
 
-          <div className="mt-4 flex items-baseline gap-2">
+          <div className="mt-4 flex flex-wrap items-baseline gap-x-2 gap-y-1">
             <span className="font-mono text-3xl font-bold tabular-nums text-[#eef3fb]">
               {monthSummary.totalCount}
             </span>
             <span className="text-xs text-[#8b9ab0]">
-              {monthSummary.totalCount === 1 ? 'trade' : 'trades'} this month
+              {monthSummary.totalCount === 1 ? 'executed trade' : 'executed trades'} this month
+              {monthSummary.missedCount > 0 && (
+                <span className="text-[#f5cc79] font-semibold">
+                  {' '}
+                  · {monthSummary.missedCount} missed
+                </span>
+              )}
             </span>
           </div>
 
@@ -623,11 +746,26 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
                 if (d.net > 0) tone = 'bg-[#47dca0]/30 border-[#47dca0]/60';
                 else if (d.net < 0) tone = 'bg-[#ff7d91]/30 border-[#ff7d91]/60';
                 else tone = 'bg-[#8ebeff]/30 border-[#8ebeff]/60';
+              } else if (d.missedCount > 0) {
+                tone = 'bg-[#f5cc79]/25 border-[#f5cc79]/55';
+              }
+              const tooltipParts: string[] = [];
+              if (d.count > 0) {
+                tooltipParts.push(
+                  `${d.count} trade${d.count === 1 ? '' : 's'} (${formatMetric(
+                    d.net,
+                    d.dayUnit,
+                    d.dayCurrency
+                  )})`
+                );
+              }
+              if (d.missedCount > 0) {
+                tooltipParts.push(`${d.missedCount} missed`);
               }
               return (
                 <div
                   key={d.key}
-                  title={`${d.key}: ${d.count} trade${d.count === 1 ? '' : 's'}${d.count ? ` (${formatR(d.net)})` : ''}`}
+                  title={tooltipParts.length > 0 ? `${d.key}: ${tooltipParts.join(' · ')}` : d.key}
                   className={`h-6 rounded-md border flex items-center justify-center font-mono text-[10px] tabular-nums text-[#9aa8be] ${tone}`}
                 >
                   {d.day}

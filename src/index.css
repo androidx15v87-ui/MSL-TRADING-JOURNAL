@@ -71,23 +71,34 @@ a:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-/* GPU-Fast Obsidian Glass Surfaces — Single-Elevation Hairline Architecture */
+/* GPU-Fast Obsidian Liquid Glass Surfaces — Refined Specular Rim Architecture */
 .glass-card {
   position: relative;
   contain: layout style;
-  background: linear-gradient(
-    162deg,
-    rgba(21, 33, 58, 0.92) 0%,
-    rgba(11, 18, 34, 0.95) 58%,
-    rgba(8, 13, 25, 0.97) 100%
-  );
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.055) 0%,
+      rgba(142, 190, 255, 0.015) 28%,
+      transparent 52%
+    ),
+    linear-gradient(
+      156deg,
+      rgba(26, 42, 74, 0.72) 0%,
+      rgba(13, 22, 42, 0.8) 54%,
+      rgba(7, 12, 24, 0.88) 100%
+    );
+  backdrop-filter: blur(24px) saturate(185%);
+  -webkit-backdrop-filter: blur(24px) saturate(185%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.13),
-    0 12px 30px -16px rgba(2, 6, 16, 0.72);
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    inset 0 -1px 0 rgba(142, 190, 255, 0.09),
+    0 16px 38px -16px rgba(2, 6, 16, 0.8);
   transition:
-    border-color 150ms cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1);
+    border-color 160ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 160ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .glass-card::after {
@@ -98,21 +109,23 @@ a:focus-visible {
   pointer-events: none;
   opacity: 0;
   background: radial-gradient(
-    420px circle at 50% 0%,
-    rgba(71, 220, 160, 0.08),
-    rgba(142, 190, 255, 0.035) 45%,
-    transparent 75%
+    440px circle at 50% 0%,
+    rgba(71, 220, 160, 0.11),
+    rgba(142, 190, 255, 0.05) 46%,
+    transparent 76%
   );
   transition: opacity 160ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .glass-card:hover {
-    border-color: rgba(141, 240, 192, 0.24);
+    border-color: rgba(141, 240, 192, 0.3);
     box-shadow:
-      inset 0 1px 0 rgba(141, 240, 192, 0.22),
-      0 16px 36px -16px rgba(2, 6, 16, 0.78),
-      0 0 24px -10px rgba(71, 220, 160, 0.16);
+      inset 0 1px 0 rgba(255, 255, 255, 0.28),
+      inset 0 0 0 1px rgba(141, 240, 192, 0.05),
+      inset 0 -1px 0 rgba(71, 220, 160, 0.12),
+      0 20px 44px -16px rgba(2, 6, 16, 0.85),
+      0 0 30px -10px rgba(71, 220, 160, 0.2);
   }
 
   .glass-card:hover::after {
@@ -121,7 +134,7 @@ a:focus-visible {
 }
 
 .glass-card:focus-within {
-  border-color: rgba(141, 240, 192, 0.22);
+  border-color: rgba(141, 240, 192, 0.28);
 }
 
 /* Selective Liquid Glass Display Surface (Hero / Key Telemetry / AI Composer / Splash) */
@@ -129,58 +142,62 @@ a:focus-visible {
   position: relative;
   contain: layout style;
   background: linear-gradient(
-    148deg,
-    rgba(28, 46, 79, 0.72) 0%,
-    rgba(13, 22, 40, 0.82) 48%,
-    rgba(8, 14, 27, 0.9) 100%
+    144deg,
+    rgba(31, 51, 88, 0.74) 0%,
+    rgba(14, 24, 44, 0.82) 48%,
+    rgba(8, 14, 28, 0.91) 100%
   );
-  backdrop-filter: blur(22px) saturate(175%);
-  -webkit-backdrop-filter: blur(22px) saturate(175%);
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(26px) saturate(185%);
+  -webkit-backdrop-filter: blur(26px) saturate(185%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    inset 0 -1px 0 rgba(142, 190, 255, 0.08),
-    0 18px 46px -18px rgba(2, 6, 16, 0.78);
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    inset 0 -1px 0 rgba(142, 190, 255, 0.1),
+    0 20px 50px -18px rgba(2, 6, 16, 0.82);
   transition:
-    border-color 150ms cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1);
+    border-color 160ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 160ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .liquid-glass::before {
   content: "";
   position: absolute;
   inset: 0 1px auto 1px;
-  height: 44%;
+  height: 46%;
   border-radius: inherit;
   pointer-events: none;
   background: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 0.08) 0%,
-    rgba(255, 255, 255, 0.015) 60%,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.02) 58%,
     transparent 100%
   );
 }
 
 @media (hover: hover) and (pointer: fine) {
   .liquid-glass:hover {
-    border-color: rgba(141, 240, 192, 0.28);
+    border-color: rgba(141, 240, 192, 0.32);
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.26),
-      inset 0 -1px 0 rgba(71, 220, 160, 0.12),
-      0 20px 50px -18px rgba(2, 6, 16, 0.84),
-      0 0 28px -12px rgba(71, 220, 160, 0.2);
+      inset 0 1px 0 rgba(255, 255, 255, 0.3),
+      inset 0 -1px 0 rgba(71, 220, 160, 0.14),
+      0 24px 56px -18px rgba(2, 6, 16, 0.86),
+      0 0 32px -12px rgba(71, 220, 160, 0.22);
   }
 }
 
 .glass-subcard {
   contain: layout style;
   background: linear-gradient(
-    160deg,
-    rgba(19, 31, 55, 0.85) 0%,
-    rgba(11, 18, 33, 0.9) 100%
+    158deg,
+    rgba(21, 34, 61, 0.8) 0%,
+    rgba(11, 18, 34, 0.88) 100%
   );
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 6px 18px -12px rgba(2, 6, 16, 0.6);
   transition:
     border-color 150ms cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1),
@@ -189,10 +206,10 @@ a:focus-visible {
 
 @media (hover: hover) and (pointer: fine) {
   .glass-subcard:hover {
-    border-color: rgba(141, 240, 192, 0.22);
+    border-color: rgba(141, 240, 192, 0.26);
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.12),
-      0 0 16px -8px rgba(71, 220, 160, 0.15);
+      inset 0 1px 0 rgba(255, 255, 255, 0.15),
+      0 0 18px -8px rgba(71, 220, 160, 0.18);
   }
 }
 
@@ -312,17 +329,28 @@ a:focus-visible {
 }
 
 .glass-modal {
-  background: linear-gradient(
-    165deg,
-    rgba(22, 34, 58, 0.92) 0%,
-    rgba(10, 16, 30, 0.95) 100%
-  );
-  backdrop-filter: blur(32px) saturate(180%);
-  -webkit-backdrop-filter: blur(32px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.075) 0%,
+      rgba(142, 190, 255, 0.02) 26%,
+      transparent 48%
+    ),
+    linear-gradient(
+      160deg,
+      rgba(25, 40, 70, 0.82) 0%,
+      rgba(12, 20, 38, 0.88) 52%,
+      rgba(7, 12, 24, 0.93) 100%
+    );
+  backdrop-filter: blur(36px) saturate(195%);
+  -webkit-backdrop-filter: blur(36px) saturate(195%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    0 28px 70px -16px rgba(0, 0, 0, 0.86);
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.045),
+    inset 0 -1px 0 rgba(142, 190, 255, 0.11),
+    0 32px 76px -16px rgba(0, 0, 0, 0.88),
+    0 0 36px -14px rgba(71, 220, 160, 0.12);
 }
 
 .glass-bar {

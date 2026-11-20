@@ -3,15 +3,25 @@ import { Download, FileSpreadsheet, ImageIcon, Plus, Search, Tag, X } from 'luci
 import {
   calculateStats,
   formatDate,
-  formatR,
+  formatMetric,
   formatTime,
+  formatTradePnL,
   fuzzySearchTrades,
   getAllTradeTags,
+  getUnitShortLabel,
 } from '../lib/calculations';
-import type { SessionType, SetupType, Trade, TradeOutcome } from '../types/journal';
+import type {
+  JournalSettings,
+  MetricUnit,
+  SessionType,
+  SetupType,
+  Trade,
+  TradeOutcome,
+} from '../types/journal';
 
 interface JournalScreenProps {
   trades: Trade[];
+  settings?: JournalSettings;
   onOpenNewTrade: () => void;
   onSelectTrade: (trade: Trade) => void;
   onExportBackup: () => void;
@@ -20,6 +30,7 @@ interface JournalScreenProps {
 
 export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
   trades,
+  settings,
   onOpenNewTrade,
   onSelectTrade,
   onExportBackup,
@@ -30,6 +41,7 @@ export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
   const [setupFilter, setSetupFilter] = useState<'' | SetupType>('');
   const [sessionFilter, setSessionFilter] = useState<'' | SessionType>('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedUnit, setSelectedUnit] = useState<MetricUnit | undefined>(undefined);
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
   const availableTags = useMemo(() => getAllTradeTags(trades), [trades]);
@@ -49,7 +61,15 @@ export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
     return fuzzySearchTrades(base, deferredSearchQuery);
   }, [trades, deferredSearchQuery, outcomeFilter, setupFilter, sessionFilter, selectedTags]);
 
-  const filteredStats = useMemo(() => calculateStats(filteredTrades), [filteredTrades]);
+  const filteredStats = useMemo(
+    () =>
+      calculateStats(filteredTrades, {
+        unit: selectedUnit,
+        defaultUnit: settings?.defaultPnlUnit,
+        defaultCurrency: settings?.currency,
+      }),
+    [filteredTrades, selectedUnit, settings?.defaultPnlUnit, settings?.currency]
+  );
 
   const hasActiveFilters = Boolean(
     searchQuery.trim() || outcomeFilter || setupFilter || sessionFilter || selectedTags.length > 0
@@ -134,6 +154,7 @@ export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
               <option value="Win">Win</option>
               <option value="Loss">Loss</option>
               <option value="BE">BE</option>
+              <option value="Missed">Missed</option>
             </select>
 
             <select
@@ -224,7 +245,7 @@ export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
           </div>
         )}
 
-        {/* Filtered Sample Telemetry + Reset */}
+        {/* Filtered Sample Telemetry + Unit Switcher + Reset */}
         <div className="pt-1 flex flex-wrap items-center justify-between gap-2 text-xs text-[#7f8fa8]">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 tabular-nums">
             <span>
@@ -233,54 +254,110 @@ export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
             </span>
             {filteredTrades.length > 0 && (
               <>
-                <span aria-hidden="true">·</span>
-                <span>
-                  Total PnL{' '}
-                  <strong
-                    className={`font-mono ${
-                      filteredStats.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
-                    }`}
-                  >
-                    {formatR(filteredStats.netR)}
-                  </strong>
-                </span>
-                <span aria-hidden="true">·</span>
-                <span>
-                  Profit{' '}
-                  <strong className="font-mono text-[#47dca0]">
-                    +{filteredStats.grossWin.toFixed(1)}R
-                  </strong>
-                </span>
-                <span aria-hidden="true">·</span>
-                <span>
-                  Loss{' '}
-                  <strong className="font-mono text-[#ff7d91]">
-                    -{filteredStats.grossLoss.toFixed(1)}R
-                  </strong>
-                </span>
-                <span aria-hidden="true">·</span>
-                <span>
-                  WR <strong className="font-mono text-[#eef3fb]">{Math.round(filteredStats.winRate)}%</strong>
-                </span>
-                <span aria-hidden="true">·</span>
-                <span>
-                  Exp{' '}
-                  <strong className="font-mono text-[#8ebeff]">
-                    {formatR(filteredStats.expectancy)}
-                  </strong>
-                </span>
+                {filteredStats.totalTrades > 0 && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      Total PnL{' '}
+                      <strong
+                        className={`font-mono ${
+                          filteredStats.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
+                        }`}
+                      >
+                        {formatMetric(
+                          filteredStats.netR,
+                          filteredStats.primaryUnit,
+                          filteredStats.primaryCurrency
+                        )}
+                      </strong>
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      Profit{' '}
+                      <strong className="font-mono text-[#47dca0]">
+                        {formatMetric(
+                          filteredStats.grossWin,
+                          filteredStats.primaryUnit,
+                          filteredStats.primaryCurrency,
+                          { decimals: filteredStats.primaryUnit === 'money' ? 0 : 1 }
+                        )}
+                      </strong>
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      Loss{' '}
+                      <strong className="font-mono text-[#ff7d91]">
+                        {formatMetric(
+                          -filteredStats.grossLoss,
+                          filteredStats.primaryUnit,
+                          filteredStats.primaryCurrency,
+                          { decimals: filteredStats.primaryUnit === 'money' ? 0 : 1 }
+                        )}
+                      </strong>
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      WR{' '}
+                      <strong className="font-mono text-[#eef3fb]">
+                        {Math.round(filteredStats.winRate)}%
+                      </strong>
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      Exp{' '}
+                      <strong className="font-mono text-[#8ebeff]">
+                        {formatMetric(
+                          filteredStats.expectancy,
+                          filteredStats.primaryUnit,
+                          filteredStats.primaryCurrency
+                        )}
+                      </strong>
+                    </span>
+                  </>
+                )}
+                {filteredStats.missed.length > 0 && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      Missed{' '}
+                      <strong className="font-mono text-[#f5cc79]">
+                        {filteredStats.missed.length}
+                      </strong>
+                    </span>
+                  </>
+                )}
               </>
             )}
           </div>
-          {hasActiveFilters && (
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="font-semibold text-[#8df0c0] hover:underline"
-            >
-              Reset filters
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {filteredStats.unitBreakdown.length > 1 && (
+              <div className="flex items-center gap-1">
+                {filteredStats.unitBreakdown.map((u) => (
+                  <button
+                    key={u.unit}
+                    type="button"
+                    onClick={() => setSelectedUnit(u.unit)}
+                    className={`rounded-lg px-2 py-0.5 text-[11px] font-semibold border transition tabular-nums ${
+                      u.unit === filteredStats.primaryUnit
+                        ? 'bg-[#47dca0]/18 border-[#47dca0]/55 text-[#8df0c0]'
+                        : 'glass-subcard text-[#9aa8be] hover:text-[#eef3fb]'
+                    }`}
+                  >
+                    {getUnitShortLabel(u.unit, u.currency)}
+                  </button>
+                ))}
+              </div>
+            )}
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="font-semibold text-[#8df0c0] hover:underline"
+              >
+                Reset filters
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -323,6 +400,8 @@ export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
                   ? 'text-[#47dca0]'
                   : t.result === 'Loss'
                   ? 'text-[#ff7d91]'
+                  : t.result === 'Missed'
+                  ? 'text-[#f5cc79]'
                   : 'text-[#8ebeff]';
               const tradeTags = Array.isArray(t.tags) ? t.tags.filter(Boolean) : [];
               return (
@@ -361,7 +440,7 @@ export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
                     </div>
                     <div className="text-right shrink-0">
                       <p className={`font-mono text-base font-bold tabular-nums ${outcomeColor}`}>
-                        {formatR(t.r)}
+                        {formatTradePnL(t, settings?.defaultPnlUnit, settings?.currency)}
                       </p>
                       <p className={`text-xs font-semibold ${outcomeColor}`}>{t.result}</p>
                     </div>
@@ -384,7 +463,7 @@ export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
                     <th className="py-3.5 px-4">Session</th>
                     <th className="py-3.5 px-4">Labels</th>
                     <th className="py-3.5 px-4">Outcome</th>
-                    <th className="py-3.5 px-4 text-right">R multiple</th>
+                    <th className="py-3.5 px-4 text-right">Profit / Loss</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/[0.06] text-sm">
@@ -394,6 +473,8 @@ export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
                         ? 'text-[#47dca0]'
                         : t.result === 'Loss'
                         ? 'text-[#ff7d91]'
+                        : t.result === 'Missed'
+                        ? 'text-[#f5cc79]'
                         : 'text-[#8ebeff]';
                     const tradeTags = Array.isArray(t.tags) ? t.tags.filter(Boolean) : [];
                     return (
@@ -436,7 +517,7 @@ export const JournalScreen: React.FC<JournalScreenProps> = React.memo(({
                         <td
                           className={`py-3.5 px-4 text-right font-mono font-bold tabular-nums whitespace-nowrap ${outcomeColor}`}
                         >
-                          {formatR(t.r)}
+                          {formatTradePnL(t, settings?.defaultPnlUnit, settings?.currency)}
                         </td>
                       </tr>
                     );

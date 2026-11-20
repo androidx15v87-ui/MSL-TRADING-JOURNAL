@@ -758,8 +758,8 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
   }, [immersiveActive, lightboxImage, threadsDrawerOpen]);
 
   const journalSnapshot = useMemo(
-    () => (syncContext ? buildJournalContext(journalState, memories) : undefined),
-    [syncContext, journalState, memories]
+    () => (isActive && syncContext ? buildJournalContext(journalState, memories) : undefined),
+    [isActive, syncContext, journalState, memories]
   );
 
   const processImageFiles = useCallback(async (files: File[]) => {

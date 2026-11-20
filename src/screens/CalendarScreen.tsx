@@ -1,10 +1,18 @@
 import React, { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
-import { formatDate, formatR, formatTime, isoDate } from '../lib/calculations';
-import type { Trade } from '../types/journal';
+import {
+  calculateStats,
+  formatDate,
+  formatMetric,
+  formatTime,
+  formatTradePnL,
+  isoDate,
+} from '../lib/calculations';
+import type { JournalSettings, Trade } from '../types/journal';
 
 interface CalendarScreenProps {
   trades: Trade[];
+  settings?: JournalSettings;
   onLogTradeForDate: (dateIso: string) => void;
   onSelectTrade: (trade: Trade) => void;
 }
@@ -13,6 +21,7 @@ const WEEKDAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
 export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
   trades,
+  settings,
   onLogTradeForDate,
   onSelectTrade,
 }) => {
@@ -46,17 +55,24 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
       d.setDate(start.getDate() + idx);
       const key = isoDate(d);
       const dayTrades = tradesByDate.get(key) || [];
-      const netR = dayTrades.reduce((sum, t) => sum + Number(t.r || 0), 0);
+      const dayStats = calculateStats(dayTrades, {
+        defaultUnit: settings?.defaultPnlUnit,
+        defaultCurrency: settings?.currency,
+      });
       return {
         key,
         dayNum: d.getDate(),
         inMonth: d.getMonth() === month,
         isToday: key === todayIso,
         trades: dayTrades,
-        netR,
+        executedCount: dayStats.totalTrades,
+        missedCount: dayStats.missed.length,
+        netR: dayStats.netR,
+        primaryUnit: dayStats.primaryUnit,
+        primaryCurrency: dayStats.primaryCurrency,
       };
     });
-  }, [viewMonth, tradesByDate, todayIso]);
+  }, [viewMonth, tradesByDate, todayIso, settings?.defaultPnlUnit, settings?.currency]);
 
   const selectedDayTrades = useMemo(() => {
     return [...(tradesByDate.get(selectedDate) || [])].sort((a, b) =>
@@ -64,9 +80,13 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
     );
   }, [tradesByDate, selectedDate]);
 
-  const selectedDayNet = useMemo(
-    () => selectedDayTrades.reduce((sum, t) => sum + Number(t.r || 0), 0),
-    [selectedDayTrades]
+  const selectedDayStats = useMemo(
+    () =>
+      calculateStats(selectedDayTrades, {
+        defaultUnit: settings?.defaultPnlUnit,
+        defaultCurrency: settings?.currency,
+      }),
+    [selectedDayTrades, settings?.defaultPnlUnit, settings?.currency]
   );
 
   const monthTitle = viewMonth.toLocaleDateString(undefined, {
@@ -95,7 +115,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
             Trading calendar
           </h2>
           <p className="mt-1 text-sm text-[#8b9ab0]">
-            Tap any date to review its trades or add a new execution.
+            Tap any date to review its executions or missed setups.
           </p>
         </div>
         <button
@@ -160,9 +180,10 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
           <div className="grid grid-cols-7 gap-1.5">
             {calendarCells.map((cell) => {
               const isSelected = cell.key === selectedDate;
-              const hasTrades = cell.trades.length > 0;
-              const isPositive = hasTrades && cell.netR > 0;
-              const isNegative = hasTrades && cell.netR < 0;
+              const hasExecuted = cell.executedCount > 0;
+              const hasOnlyMissed = !hasExecuted && cell.missedCount > 0;
+              const isPositive = hasExecuted && cell.netR > 0;
+              const isNegative = hasExecuted && cell.netR < 0;
 
               let bgStyle = 'bg-white/[0.03] border-white/[0.07] text-[#c7d3e5]';
               if (!cell.inMonth) {
@@ -171,8 +192,10 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
                 bgStyle = 'bg-[#47dca0]/12 border-[#47dca0]/40 text-[#eef3fb]';
               } else if (isNegative) {
                 bgStyle = 'bg-[#ff7d91]/12 border-[#ff7d91]/40 text-[#eef3fb]';
-              } else if (hasTrades) {
+              } else if (hasExecuted) {
                 bgStyle = 'bg-[#8ebeff]/12 border-[#8ebeff]/40 text-[#eef3fb]';
+              } else if (hasOnlyMissed) {
+                bgStyle = 'bg-[#f5cc79]/12 border-[#f5cc79]/40 text-[#eef3fb]';
               }
 
               return (
@@ -192,14 +215,16 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
                     >
                       {cell.dayNum}
                     </span>
-                    {hasTrades && (
+                    {(hasExecuted || hasOnlyMissed) && (
                       <span
                         className={`text-[9px] font-mono font-bold tabular-nums ${
                           isPositive
                             ? 'text-[#47dca0]'
                             : isNegative
                             ? 'text-[#ff7d91]'
-                            : 'text-[#8ebeff]'
+                            : hasExecuted
+                            ? 'text-[#8ebeff]'
+                            : 'text-[#f5cc79]'
                         }`}
                       >
                         {cell.trades.length}
@@ -207,7 +232,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
                     )}
                   </div>
 
-                  {hasTrades && (
+                  {hasExecuted ? (
                     <span
                       className={`font-mono text-[10px] font-semibold tabular-nums truncate ${
                         isPositive
@@ -217,9 +242,15 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
                           : 'text-[#8ebeff]'
                       }`}
                     >
-                      {formatR(cell.netR)}
+                      {formatMetric(cell.netR, cell.primaryUnit, cell.primaryCurrency, {
+                        decimals: cell.primaryUnit === 'money' ? 0 : 2,
+                      })}
                     </span>
-                  )}
+                  ) : hasOnlyMissed ? (
+                    <span className="text-[10px] font-semibold text-[#f5cc79] truncate">
+                      {cell.missedCount} missed
+                    </span>
+                  ) : null}
                 </button>
               );
             })}
@@ -237,7 +268,11 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-sm bg-[#8ebeff]" />
-              Trade logged / BE
+              Breakeven
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-sm bg-[#f5cc79]" />
+              Missed setup
             </span>
           </div>
         </article>
@@ -257,11 +292,29 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
               })}
             </h3>
             <p className="mt-1 text-xs text-[#8b9ab0] tabular-nums">
-              {selectedDayTrades.length > 0
-                ? `${selectedDayTrades.length} ${
-                    selectedDayTrades.length === 1 ? 'trade' : 'trades'
-                  } · Net ${formatR(selectedDayNet)}`
-                : 'No trades recorded for this date.'}
+              {selectedDayTrades.length === 0 ? (
+                'No trades recorded for this date.'
+              ) : (
+                <>
+                  {selectedDayStats.totalTrades > 0 && (
+                    <>
+                      {selectedDayStats.totalTrades}{' '}
+                      {selectedDayStats.totalTrades === 1 ? 'executed' : 'executed'} · Net{' '}
+                      {formatMetric(
+                        selectedDayStats.netR,
+                        selectedDayStats.primaryUnit,
+                        selectedDayStats.primaryCurrency
+                      )}
+                    </>
+                  )}
+                  {selectedDayStats.missed.length > 0 && (
+                    <span className="text-[#f5cc79] font-semibold">
+                      {selectedDayStats.totalTrades > 0 ? ' · ' : ''}
+                      {selectedDayStats.missed.length} missed
+                    </span>
+                  )}
+                </>
+              )}
             </p>
 
             <div className="mt-4 space-y-2.5">
@@ -276,6 +329,8 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
                       ? 'text-[#47dca0]'
                       : t.result === 'Loss'
                       ? 'text-[#ff7d91]'
+                      : t.result === 'Missed'
+                      ? 'text-[#f5cc79]'
                       : 'text-[#8ebeff]';
                   return (
                     <button
@@ -289,11 +344,14 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
                           {t.pair} · {t.direction}
                         </span>
                         <span className={`font-mono text-sm font-bold tabular-nums ${color}`}>
-                          {formatR(t.r)}
+                          {formatTradePnL(t, settings?.defaultPnlUnit, settings?.currency)}
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-[#7f8fa8]">
-                        {formatTime(t.date)} · {t.setup} · {t.session} · {t.result}
+                        {formatTime(t.date)} · {t.setup} · {t.session} ·{' '}
+                        <span className={t.result === 'Missed' ? 'text-[#f5cc79] font-semibold' : ''}>
+                          {t.result}
+                        </span>
                       </p>
                     </button>
                   );

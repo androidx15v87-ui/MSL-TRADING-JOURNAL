@@ -1,7 +1,10 @@
 import {
   calculateMonthlyPnL,
   calculateStats,
-  formatR,
+  formatMetric,
+  formatTradePnL,
+  formatTradeRisk,
+  getUnitShortLabel,
   groupPerformance,
   groupPerformanceByTag,
 } from './calculations';
@@ -117,18 +120,31 @@ export function buildJournalContext(
     return lastCtxValue;
   }
 
-  const stats = calculateStats(state.trades);
-  const bySetup = groupPerformance(state.trades, 'setup');
-  const bySession = groupPerformance(state.trades, 'session');
-  const byTag = groupPerformanceByTag(state.trades);
-  const monthly = calculateMonthlyPnL(state.trades, 6);
+  const defaultUnit = state.settings.defaultPnlUnit || 'r';
+  const defaultRiskUnit = state.settings.defaultRiskUnit || 'r';
+  const defaultCurr = state.settings.currency || '$';
+
+  const stats = calculateStats(state.trades, {
+    defaultUnit,
+    defaultCurrency: defaultCurr,
+  });
+  const activeUnit = stats.primaryUnit;
+  const activeCurr = stats.primaryCurrency;
+  const fmt = (val: number) => formatMetric(val, activeUnit, activeCurr, { signed: true });
+  const fmtAbs = (val: number) => formatMetric(val, activeUnit, activeCurr, { signed: false });
+  const unitFilter = stats.isMixedUnits ? activeUnit : undefined;
+
+  const bySetup = groupPerformance(state.trades, 'setup', unitFilter);
+  const bySession = groupPerformance(state.trades, 'session', unitFilter);
+  const byTag = groupPerformanceByTag(state.trades, unitFilter);
+  const monthly = calculateMonthlyPnL(state.trades, 6, new Date(), unitFilter);
 
   const recentTrades = [...state.trades]
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 8)
     .map((t) => {
       const tagsStr = t.tags && t.tags.length > 0 ? t.tags.join(',') : '';
-      return `- ${t.id} | ${t.date} | ${t.pair} ${t.direction} | ${t.setup}/${t.session} | ${t.result} ${formatR(t.r)} (risk ${t.risk}R)${t.model ? ` | model:${t.model}` : ''}${tagsStr ? ` | tags:[${tagsStr}]` : ''}${t.notes ? ` | "${t.notes.slice(0, 60)}"` : ''}`;
+      return `- ${t.id} | ${t.date} | ${t.pair} ${t.direction} | ${t.setup}/${t.session} | ${t.result} ${formatTradePnL(t, defaultUnit, defaultCurr)} (risk ${formatTradeRisk(t, defaultRiskUnit, defaultCurr)})${t.model ? ` | model:${t.model}` : ''}${tagsStr ? ` | tags:[${tagsStr}]` : ''}${t.notes ? ` | "${t.notes.slice(0, 60)}"` : ''}`;
     });
 
   const modelsSummary = state.models
@@ -154,21 +170,31 @@ export function buildJournalContext(
     .slice(0, 24)
     .map((m) => `- [${m.id}] (${m.category}) ${m.content.slice(0, 160)}`);
 
+  const unitBreakdownLine = stats.isMixedUnits
+    ? `Unit Breakdown: ${stats.unitBreakdown
+        .map(
+          (b) =>
+            `${getUnitShortLabel(b.unit, b.currency)}: ${formatMetric(b.net, b.unit, b.currency)} (${b.count} trades)`
+        )
+        .join(' | ')}`
+    : '';
+
   const result = [
     memoryLines.length
       ? `Saved User Memories (${memoryLines.length} — persistent across all conversations):\n${memoryLines.join('\n')}`
       : '',
-    `Trader: ${state.profile.name || 'Trader'} | Market: ${state.profile.market || 'Unspecified'}`,
-    `Total PnL & Stats: Net PnL ${formatR(stats.netR)} | Total Profits +${stats.grossWin.toFixed(2)}R | Total Losses -${stats.grossLoss.toFixed(2)}R | ${stats.totalTrades} trades | WR ${stats.winRate.toFixed(1)}% (${stats.wins.length}W/${stats.losses.length}L/${stats.breakevens.length}BE) | Exp ${formatR(stats.expectancy)} | PF ${stats.profitFactor === Infinity ? '∞' : stats.profitFactor.toFixed(2)} | AvgW ${formatR(stats.avgWinner)} | AvgL ${formatR(stats.avgLoser)} | MaxDD -${stats.maxDrawdownR.toFixed(2)}R | Best Session ${stats.bestSession ? `${stats.bestSession.name} (${formatR(stats.bestSession.netR)})` : 'None'}`,
-    `6M Monthly Net R: ${monthly.map((m) => `${m.label}:${formatR(m.netR)}(${m.tradesCount})`).join(' | ')}`,
+    `Trader: ${state.profile.name || 'Trader'} | Market: ${state.profile.market || 'Unspecified'} | Default Units: P&L=${getUnitShortLabel(defaultUnit, defaultCurr)}, Risk=${getUnitShortLabel(defaultRiskUnit, defaultCurr)}`,
+    `Total PnL & Stats (${getUnitShortLabel(activeUnit, activeCurr)}): Net PnL ${fmt(stats.netR)} | Total Profits +${fmtAbs(stats.grossWin)} | Total Losses -${fmtAbs(stats.grossLoss)} | ${stats.totalTrades} executed (${stats.missed.length} missed) | WR ${stats.winRate.toFixed(1)}% (${stats.wins.length}W/${stats.losses.length}L/${stats.breakevens.length}BE/${stats.missed.length}Missed) | Exp ${fmt(stats.expectancy)} | PF ${stats.profitFactor === Infinity ? '∞' : stats.profitFactor.toFixed(2)} | AvgW ${fmt(stats.avgWinner)} | AvgL ${fmt(stats.avgLoser)} | MaxDD -${fmtAbs(stats.maxDrawdownR)} | Best Session ${stats.bestSession ? `${stats.bestSession.name} (${fmt(stats.bestSession.netR)})` : 'None'}`,
+    unitBreakdownLine,
+    `6M Monthly Net (${getUnitShortLabel(activeUnit, activeCurr)}): ${monthly.map((m) => `${m.label}:${fmt(m.netR)}(${m.tradesCount})`).join(' | ')}`,
     bySetup.length
-      ? `Setups: ${bySetup.map((s) => `${s.label}:${formatR(s.netR)}(${s.count},${Math.round(s.winRate)}%)`).join(' | ')}`
+      ? `Setups: ${bySetup.map((s) => `${s.label}:${fmt(s.netR)}(${s.count},${Math.round(s.winRate)}%)`).join(' | ')}`
       : '',
     bySession.length
-      ? `Sessions: ${bySession.map((s) => `${s.label}:${formatR(s.netR)}(${s.count},${Math.round(s.winRate)}%)`).join(' | ')}`
+      ? `Sessions: ${bySession.map((s) => `${s.label}:${fmt(s.netR)}(${s.count},${Math.round(s.winRate)}%)`).join(' | ')}`
       : '',
     byTag.length
-      ? `Tags: ${byTag.map((tg) => `#${tg.label}:${formatR(tg.netR)}(${tg.count},${Math.round(tg.winRate)}%)`).join(' | ')}`
+      ? `Tags: ${byTag.map((tg) => `#${tg.label}:${fmt(tg.netR)}(${tg.count},${Math.round(tg.winRate)}%)`).join(' | ')}`
       : '',
     modelsSummary.length ? `Models:\n${modelsSummary.join('\n')}` : '',
     alarmsSummary.length ? `Alarms: ${alarmsSummary.join(' | ')}` : '',

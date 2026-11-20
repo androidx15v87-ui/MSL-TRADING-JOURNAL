@@ -1,7 +1,8 @@
 export type Direction = 'Long' | 'Short';
 export type SetupType = 'Reversal' | 'Continuation' | 'Breakout' | 'Other';
 export type SessionType = 'London' | 'New York' | 'Asia' | 'Overlap' | 'Other';
-export type TradeOutcome = 'Win' | 'Loss' | 'BE';
+export type TradeOutcome = 'Win' | 'Loss' | 'BE' | 'Missed';
+export type MetricUnit = 'r' | 'percent' | 'money' | 'value';
 export type ModelType = 'Reversal' | 'Continuation' | 'Both';
 export type CustomFieldType = 'text' | 'number' | 'both';
 
@@ -39,6 +40,9 @@ export interface Trade {
   result: TradeOutcome;
   r: number;
   risk: number;
+  pnlUnit?: MetricUnit;
+  riskUnit?: MetricUnit;
+  currency?: string;
   model: string;
   tags?: string[];
   notes: string;
@@ -89,6 +93,9 @@ export interface UserProfile {
 export interface JournalSettings {
   quoteFrequency: number; // 30 | 60 | 120 | 240 | 0 (0 = only at session alarms)
   quoteNotifications: boolean;
+  defaultPnlUnit?: MetricUnit;
+  defaultRiskUnit?: MetricUnit;
+  currency?: string;
 }
 
 export interface JournalState {
@@ -108,11 +115,27 @@ export interface BackupPayload extends JournalState {
   exportedAt: string;
 }
 
+export interface UnitStatsBreakdown {
+  unit: MetricUnit;
+  currency: string;
+  count: number;
+  net: number;
+  grossWin: number;
+  grossLoss: number;
+}
+
 export interface JournalStats {
-  totalTrades: number;
+  totalTrades: number; // Executed trades count (Win + Loss + BE; excludes Missed)
+  allLoggedCount: number; // Total entries including Missed
   wins: Trade[];
   losses: Trade[];
   breakevens: Trade[];
+  missed: Trade[];
+  missedOpportunityR: number;
+  primaryUnit: MetricUnit;
+  primaryCurrency: string;
+  isMixedUnits: boolean;
+  unitBreakdown: UnitStatsBreakdown[];
   netR: number;
   winRate: number;
   expectancy: number;
@@ -155,6 +178,9 @@ export type AIAppAction =
         result: TradeOutcome;
         r: number;
         risk?: number;
+        pnlUnit?: MetricUnit;
+        riskUnit?: MetricUnit;
+        currency?: string;
         model?: string;
         tags?: string[];
         notes?: string;
@@ -172,6 +198,9 @@ export type AIAppAction =
         result?: TradeOutcome;
         r?: number;
         risk?: number;
+        pnlUnit?: MetricUnit;
+        riskUnit?: MetricUnit;
+        currency?: string;
         model?: string;
         tags?: string[];
         notes?: string;

@@ -54,6 +54,7 @@ import {
 import type {
   JournalSettings,
   JournalState,
+  MetricUnit,
   SessionAlarm,
   UserProfile,
 } from '../types/journal';
@@ -93,6 +94,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [alarmDraft, setAlarmDraft] = useState<SessionAlarm[]>(alarms);
   const [quoteFreq, setQuoteFreq] = useState<number>(settings.quoteFrequency);
   const [quoteNotifs, setQuoteNotifs] = useState<boolean>(settings.quoteNotifications);
+  const [defaultPnlUnit, setDefaultPnlUnit] = useState<MetricUnit>(settings.defaultPnlUnit || 'r');
+  const [defaultRiskUnit, setDefaultRiskUnit] = useState<MetricUnit>(settings.defaultRiskUnit || 'r');
+  const [currencySymbol, setCurrencySymbol] = useState<string>(settings.currency || '$');
 
   const [displayName, setDisplayName] = useState(profile.name);
   const [defaultMarket, setDefaultMarket] = useState(profile.market);
@@ -127,6 +131,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   useEffect(() => {
     setQuoteFreq(settings.quoteFrequency);
     setQuoteNotifs(settings.quoteNotifications);
+    setDefaultPnlUnit(settings.defaultPnlUnit || 'r');
+    setDefaultRiskUnit(settings.defaultRiskUnit || 'r');
+    setCurrencySymbol(settings.currency || '$');
   }, [settings]);
 
   useEffect(() => {
@@ -154,6 +161,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     const nextSettings: JournalSettings = {
       quoteFrequency: quoteFreq,
       quoteNotifications: quoteNotifs,
+      defaultPnlUnit,
+      defaultRiskUnit,
+      currency: currencySymbol.trim() || '$',
     };
     await onSaveAlarmsAndSettings(alarmDraft, nextSettings);
     const synced = syncNativeAlarms(alarmDraft);
@@ -219,9 +229,17 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   const handleSavePreferences = async (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanCurr = currencySymbol.trim().slice(0, 8) || '$';
     await onSaveProfile({
       name: displayName.trim(),
       market: defaultMarket.trim(),
+    });
+    await onSaveAlarmsAndSettings(alarmDraft, {
+      quoteFrequency: quoteFreq,
+      quoteNotifications: quoteNotifs,
+      defaultPnlUnit,
+      defaultRiskUnit,
+      currency: cleanCurr,
     });
   };
 
@@ -552,6 +570,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                   await onSaveAlarmsAndSettings(alarmDraft, {
                     quoteFrequency: val,
                     quoteNotifications: quoteNotifs,
+                    defaultPnlUnit,
+                    defaultRiskUnit,
+                    currency: currencySymbol.trim() || '$',
                   });
                 }}
                 className="w-full min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb] focus:border-[#47dca0] focus:outline-none"
@@ -584,6 +605,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                   await onSaveAlarmsAndSettings(alarmDraft, {
                     quoteFrequency: quoteFreq,
                     quoteNotifications: next,
+                    defaultPnlUnit,
+                    defaultRiskUnit,
+                    currency: currencySymbol.trim() || '$',
                   });
                 }}
                 className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors ${
@@ -931,7 +955,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
           {/* Preferences */}
           <form onSubmit={handleSavePreferences} className="pt-4 border-t border-white/[0.08] space-y-3.5">
-            <h4 className="text-sm font-bold text-[#eef3fb]">Preferences</h4>
+            <h4 className="text-sm font-bold text-[#eef3fb]">Preferences &amp; Default Units</h4>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block space-y-1.5">
                 <span className="text-xs font-medium text-[#a9b7cc]">Display name</span>
@@ -954,7 +978,64 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                   className="w-full min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb] focus:border-[#47dca0] focus:outline-none"
                 />
               </label>
+
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-[#a9b7cc]">Default P&amp;L unit</span>
+                <select
+                  value={defaultPnlUnit}
+                  onChange={(e) => setDefaultPnlUnit(e.target.value as MetricUnit)}
+                  className="w-full min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb] focus:border-[#47dca0] focus:outline-none"
+                >
+                  <option value="r">R-Multiple (Ratio)</option>
+                  <option value="percent">Percentage (%)</option>
+                  <option value="money">Money ({currencySymbol || '$'})</option>
+                  <option value="value">Value / Points</option>
+                </select>
+              </label>
+
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-[#a9b7cc]">Default risk unit</span>
+                <select
+                  value={defaultRiskUnit}
+                  onChange={(e) => setDefaultRiskUnit(e.target.value as MetricUnit)}
+                  className="w-full min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb] focus:border-[#47dca0] focus:outline-none"
+                >
+                  <option value="r">R-Multiple (Ratio)</option>
+                  <option value="percent">Percentage (%)</option>
+                  <option value="money">Money ({currencySymbol || '$'})</option>
+                  <option value="value">Value / Points</option>
+                </select>
+              </label>
             </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl glass-subcard px-3.5 py-2.5">
+              <span className="text-xs font-medium text-[#a9b7cc]">Preferred currency symbol</span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {['$', '€', '£', '¥', '₦'].map((sym) => (
+                  <button
+                    key={sym}
+                    type="button"
+                    onClick={() => setCurrencySymbol(sym)}
+                    className={`min-h-[32px] min-w-[34px] rounded-lg border px-2 text-xs font-bold transition ${
+                      currencySymbol === sym
+                        ? 'bg-[#47dca0]/18 border-[#47dca0]/55 text-[#8df0c0]'
+                        : 'bg-[#080d18]/80 border-white/[0.08] text-[#8b9ab0] hover:text-[#eef3fb]'
+                    }`}
+                  >
+                    {sym}
+                  </button>
+                ))}
+                <input
+                  type="text"
+                  maxLength={8}
+                  value={currencySymbol}
+                  onChange={(e) => setCurrencySymbol(e.target.value.slice(0, 8))}
+                  aria-label="Preferred currency symbol"
+                  className="w-16 min-h-[32px] rounded-lg glass-input px-2 text-center text-xs font-mono text-[#eef3fb]"
+                />
+              </div>
+            </div>
+
             <button
               type="submit"
               className="min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#47dca0] px-5 py-2 text-sm font-bold text-[#051612] hover:bg-[#62e4b0] transition"
@@ -990,7 +1071,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-xs tabular-nums shrink-0">
-          <span className="font-semibold text-[#8df0c0]">Version 10.5.4</span>
+          <span className="font-semibold text-[#8df0c0]">Version 10.6.9</span>
           <span aria-hidden="true" className="text-[#56647c]">·</span>
           <span className="font-semibold text-[#eef3fb]">Developed by ANDROID</span>
         </div>

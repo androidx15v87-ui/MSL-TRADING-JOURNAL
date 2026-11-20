@@ -124,7 +124,7 @@ export const Layout: React.FC<LayoutProps> = ({
               MSL Journal
             </span>
             <span className="block text-[11px] text-[#8b9ab0] truncate tabular-nums">
-              {displayName ? `${displayName} · Version 10.5.4` : 'Version 10.5.4'}
+              {displayName ? `${displayName} · Version 10.6.9` : 'Version 10.6.9'}
             </span>
           </span>
         </button>

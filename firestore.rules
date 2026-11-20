@@ -69,6 +69,9 @@ service cloud.firestore {
           'playbookRisk',
           'quoteFrequency',
           'quoteNotifications',
+          'defaultPnlUnit',
+          'defaultRiskUnit',
+          'currency',
           'createdAt',
           'updatedAt'
         ])
@@ -85,6 +88,9 @@ service cloud.firestore {
         && data.quoteFrequency is number
         && data.quoteFrequency in [0, 30, 60, 120, 240]
         && data.quoteNotifications is bool
+        && (!('defaultPnlUnit' in data) || (data.defaultPnlUnit is string && data.defaultPnlUnit in ['r', 'percent', 'money', 'value']))
+        && (!('defaultRiskUnit' in data) || (data.defaultRiskUnit is string && data.defaultRiskUnit in ['r', 'percent', 'money', 'value']))
+        && (!('currency' in data) || isBoundedString(data.currency, 1, 8))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -119,6 +125,9 @@ service cloud.firestore {
           'result',
           'r',
           'risk',
+          'pnlUnit',
+          'riskUnit',
+          'currency',
           'model',
           'tags',
           'notes',
@@ -141,13 +150,16 @@ service cloud.firestore {
         && data.session is string
         && data.session in ['London', 'New York', 'Asia', 'Overlap', 'Other']
         && data.result is string
-        && data.result in ['Win', 'Loss', 'BE']
+        && data.result in ['Win', 'Loss', 'BE', 'Missed']
         && data.r is number
-        && data.r >= -1000
-        && data.r <= 1000
+        && data.r >= -100000000
+        && data.r <= 100000000
         && data.risk is number
         && data.risk >= 0
-        && data.risk <= 1000
+        && data.risk <= 100000000
+        && (!('pnlUnit' in data) || (data.pnlUnit is string && data.pnlUnit in ['r', 'percent', 'money', 'value']))
+        && (!('riskUnit' in data) || (data.riskUnit is string && data.riskUnit in ['r', 'percent', 'money', 'value']))
+        && (!('currency' in data) || isBoundedString(data.currency, 1, 8))
         && isBoundedString(data.model, 0, 120)
         && isValidStringList(data.tags, 15, 40)
         && isBoundedString(data.notes, 0, 10000)
@@ -321,6 +333,9 @@ service cloud.firestore {
           || incoming().diff(existing()).affectedKeys().hasOnly([
             'quoteFrequency',
             'quoteNotifications',
+            'defaultPnlUnit',
+            'defaultRiskUnit',
+            'currency',
             'updatedAt'
           ])
           || incoming().diff(existing()).affectedKeys().hasOnly([
@@ -333,6 +348,9 @@ service cloud.firestore {
             'playbookRisk',
             'quoteFrequency',
             'quoteNotifications',
+            'defaultPnlUnit',
+            'defaultRiskUnit',
+            'currency',
             'updatedAt'
           ])
         );
@@ -365,6 +383,9 @@ service cloud.firestore {
             'result',
             'r',
             'risk',
+            'pnlUnit',
+            'riskUnit',
+            'currency',
             'model',
             'tags',
             'notes',
