@@ -2,6 +2,7 @@ import { createDefaultState, DEFAULT_ALARMS, DEFAULT_FIELDS, DEFAULT_PLAYBOOK } 
 import type {
   BackupPayload,
   CustomField,
+  DashboardWidgetsConfig,
   JournalSettings,
   JournalState,
   Playbook,
@@ -379,6 +380,90 @@ export async function savePlaybookChecks(
   }
 }
 
+const DASHBOARD_WIDGETS_KEY = 'dashboardWidgets';
+const DASHBOARD_WIDGETS_LS_KEY = 'msl_dashboard_widgets_v1';
+
+export const DEFAULT_DASHBOARD_WIDGETS: DashboardWidgetsConfig = {
+  monthlyGrowth: true,
+  topSetups: true,
+  sessionWinRate: true,
+};
+
+export function sanitizeDashboardWidgets(raw: unknown): DashboardWidgetsConfig {
+  if (!raw || typeof raw !== 'object') {
+    return { ...DEFAULT_DASHBOARD_WIDGETS };
+  }
+  const obj = raw as Record<string, unknown>;
+  return {
+    monthlyGrowth: obj.monthlyGrowth === undefined ? true : Boolean(obj.monthlyGrowth),
+    topSetups: obj.topSetups === undefined ? true : Boolean(obj.topSetups),
+    sessionWinRate: obj.sessionWinRate === undefined ? true : Boolean(obj.sessionWinRate),
+  };
+}
+
+function getDashboardWidgetsKvKey(uid?: string | null): string {
+  return `${DASHBOARD_WIDGETS_KEY}::${getChecksUserScope(uid)}`;
+}
+
+function getDashboardWidgetsLsKey(uid?: string | null): string {
+  return `${DASHBOARD_WIDGETS_LS_KEY}_${getChecksUserScope(uid)}`;
+}
+
+export function readDashboardWidgetsSync(uid?: string | null): DashboardWidgetsConfig {
+  try {
+    const scopedRaw = localStorage.getItem(getDashboardWidgetsLsKey(uid));
+    if (scopedRaw) {
+      return sanitizeDashboardWidgets(JSON.parse(scopedRaw));
+    }
+    const legacyRaw = localStorage.getItem(DASHBOARD_WIDGETS_LS_KEY);
+    if (legacyRaw) {
+      return sanitizeDashboardWidgets(JSON.parse(legacyRaw));
+    }
+  } catch {
+    // Ignore storage error
+  }
+  return { ...DEFAULT_DASHBOARD_WIDGETS };
+}
+
+export async function loadDashboardWidgets(
+  uid?: string | null
+): Promise<DashboardWidgetsConfig> {
+  const kvKey = getDashboardWidgetsKvKey(uid);
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_KV, 'readonly');
+    const store = tx.objectStore(STORE_KV);
+    const scopedRow = await idbReq<{ key: string; value: unknown } | undefined>(store.get(kvKey));
+    await txDone(tx);
+    if (scopedRow && scopedRow.value && typeof scopedRow.value === 'object') {
+      return sanitizeDashboardWidgets(scopedRow.value);
+    }
+  } catch {
+    // Fallback to localStorage
+  }
+  return readDashboardWidgetsSync(uid);
+}
+
+export async function saveDashboardWidgets(
+  config: DashboardWidgetsConfig,
+  uid?: string | null
+): Promise<void> {
+  const clean = sanitizeDashboardWidgets(config);
+  try {
+    localStorage.setItem(getDashboardWidgetsLsKey(uid), JSON.stringify(clean));
+  } catch {
+    // Ignore storage quota errors
+  }
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_KV, 'readwrite');
+    tx.objectStore(STORE_KV).put({ key: getDashboardWidgetsKvKey(uid), value: clean });
+    await txDone(tx);
+  } catch {
+    // Ignore IDB errors
+  }
+}
+
 export async function saveTradeRecord(trade: Trade): Promise<void> {
   const db = await openDB();
   const tx = db.transaction([STORE_TRADES, STORE_IMAGES], 'readwrite');
@@ -433,11 +518,15 @@ export async function saveFullJournalState(
   const tradeStore = tx.objectStore(STORE_TRADES);
   const imageStore = tx.objectStore(STORE_IMAGES);
 
-  // Preserve per-user playbookChecks entries when refreshing journal state
+  // Preserve per-user playbookChecks and dashboardWidgets entries when refreshing journal state
   const existingKv = await idbReq<{ key: string; value: unknown }[]>(kvStore.getAll());
-  const preservedChecks = existingKv.filter((row) =>
-    String(row.key).startsWith(`${PLAYBOOK_CHECKS_KEY}::`)
-  );
+  const preservedChecks = existingKv.filter((row) => {
+    const k = String(row.key);
+    return (
+      k.startsWith(`${PLAYBOOK_CHECKS_KEY}::`) ||
+      k.startsWith(`${DASHBOARD_WIDGETS_KEY}::`)
+    );
+  });
 
   kvStore.clear();
   tradeStore.clear();

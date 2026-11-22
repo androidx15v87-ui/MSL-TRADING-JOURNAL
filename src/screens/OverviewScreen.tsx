@@ -1,5 +1,15 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowUpRight, Bell, Bot, CalendarDays, Copy, Plus, RefreshCw } from 'lucide-react';
+import {
+  ArrowUpRight,
+  Bell,
+  Bot,
+  CalendarDays,
+  Copy,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  SlidersHorizontal,
+} from 'lucide-react';
 import {
   Bar,
   CartesianGrid,
@@ -21,18 +31,31 @@ import {
   formatTradePnL,
   getUnitLongLabel,
   getUnitShortLabel,
+  groupPerformance,
   groupPerformanceByTag,
   isoDate,
   normalizeMetricUnit,
   type MonthlyPnLPoint,
 } from '../lib/calculations';
-import type { JournalSettings, MetricUnit, PageId, SessionAlarm, Trade } from '../types/journal';
+import { DEFAULT_DASHBOARD_WIDGETS } from '../lib/db';
+import type {
+  DashboardWidgetId,
+  DashboardWidgetsConfig,
+  JournalSettings,
+  MetricUnit,
+  PageId,
+  SessionAlarm,
+  Trade,
+} from '../types/journal';
 
 interface OverviewScreenProps {
   trades: Trade[];
   alarms: SessionAlarm[];
   settings?: JournalSettings;
   quote: QuoteItem;
+  widgetVisibility?: DashboardWidgetsConfig;
+  onToggleWidget?: (id: DashboardWidgetId) => void;
+  onResetWidgets?: () => void;
   onNextQuote: () => void;
   onCopyQuote: () => void;
   onOpenLogTrade: () => void;
@@ -40,11 +63,36 @@ interface OverviewScreenProps {
   onSelectTrade: (trade: Trade) => void;
 }
 
+const DASHBOARD_WIDGET_OPTIONS: ReadonlyArray<{
+  id: DashboardWidgetId;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: 'monthlyGrowth',
+    label: 'Monthly Growth Chart',
+    description: '6-month net P&L bars & cumulative curve',
+  },
+  {
+    id: 'topSetups',
+    label: 'Top 5 Setup Performance',
+    description: 'Highest-performing setups by net return',
+  },
+  {
+    id: 'sessionWinRate',
+    label: 'Session Win Rate',
+    description: 'Win rates & W/L breakdown by session',
+  },
+];
+
 export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
   trades,
   alarms,
   settings,
   quote,
+  widgetVisibility,
+  onToggleWidget,
+  onResetWidgets,
   onNextQuote,
   onCopyQuote,
   onOpenLogTrade,
@@ -52,6 +100,33 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
   onSelectTrade,
 }) => {
   const [selectedUnit, setSelectedUnit] = useState<MetricUnit | undefined>(undefined);
+  const [widgetCustomizerOpen, setWidgetCustomizerOpen] = useState(false);
+  const [fallbackWidgets, setFallbackWidgets] = useState<DashboardWidgetsConfig>(() => ({
+    ...DEFAULT_DASHBOARD_WIDGETS,
+  }));
+
+  const activeWidgets = widgetVisibility ?? fallbackWidgets;
+
+  const handleToggleWidget = (id: DashboardWidgetId) => {
+    if (onToggleWidget) {
+      onToggleWidget(id);
+      return;
+    }
+    setFallbackWidgets((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const handleResetWidgets = () => {
+    if (onResetWidgets) {
+      onResetWidgets();
+      return;
+    }
+    setFallbackWidgets({ ...DEFAULT_DASHBOARD_WIDGETS });
+  };
+
+  const visibleWidgetsCount = useMemo(
+    () => DASHBOARD_WIDGET_OPTIONS.filter((w) => activeWidgets[w.id]).length,
+    [activeWidgets]
+  );
 
   const stats = useMemo(
     () =>
@@ -148,6 +223,22 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
     );
     return { totalR, totalTrades, best };
   }, [monthlyPnL]);
+
+  const topSetups = useMemo(
+    () => groupPerformance(trades, 'setup', unitFilter).slice(0, 5),
+    [trades, unitFilter]
+  );
+
+  const maxTopSetupAbs = useMemo(
+    () => Math.max(0.1, ...topSetups.map((item) => Math.abs(item.netR))),
+    [topSetups]
+  );
+
+  const sessionWinRates = useMemo(() => {
+    return groupPerformance(trades, 'session', unitFilter).sort(
+      (a, b) => b.winRate - a.winRate || b.netR - a.netR || b.count - a.count
+    );
+  }, [trades, unitFilter]);
 
   const topTagEdge = useMemo(() => {
     const grouped = groupPerformanceByTag(trades, unitFilter);
@@ -384,139 +475,436 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
         </article>
       </section>
 
-      {/* Recharts 6-Month Monthly PnL Summary Chart */}
-      <section className="rounded-2xl glass-card p-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/[0.08]">
-          <div>
-            <p className="text-xs font-medium text-[#8df0c0]">
-              6-month growth
-            </p>
-            <h3 className="text-base font-bold text-[#eef3fb]">
-              Monthly PnL summary (Net {unitShort})
-            </h3>
-          </div>
-          <div className="flex flex-wrap items-center gap-4 text-xs">
-            <span className="text-[#8b9ab0] tabular-nums">
-              6M Net:{' '}
-              <strong
-                className={`font-mono ${
-                  sixMonthSummary.totalR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
-                }`}
-              >
-                {formatMetric(sixMonthSummary.totalR, activeUnit, activeCurrency)}
-              </strong>
+      {/* User-Customizable Dashboard Widget Selector */}
+      <section aria-label="Dashboard widgets" className="space-y-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-baseline gap-2.5">
+            <h3 className="text-sm font-bold text-[#eef3fb]">Performance widgets</h3>
+            <span className="text-xs text-[#7f8fa8] font-mono tabular-nums">
+              {visibleWidgetsCount} of {DASHBOARD_WIDGET_OPTIONS.length} shown
             </span>
-            {sixMonthSummary.best && (
-              <span className="text-[#8b9ab0] tabular-nums">
-                Best month:{' '}
-                <strong className="font-mono text-[#8df0c0]">
-                  {sixMonthSummary.best.label} (
-                  {formatMetric(sixMonthSummary.best.netR, activeUnit, activeCurrency)})
-                </strong>
-              </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {visibleWidgetsCount < DASHBOARD_WIDGET_OPTIONS.length && (
+              <button
+                type="button"
+                onClick={handleResetWidgets}
+                className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl glass-subcard px-3 py-1.5 text-xs font-semibold text-[#8df0c0] hover:border-[#47dca0]/45 transition whitespace-nowrap"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Show all</span>
+              </button>
             )}
+            <button
+              type="button"
+              onClick={() => setWidgetCustomizerOpen((prev) => !prev)}
+              aria-expanded={widgetCustomizerOpen}
+              className={`min-h-[38px] inline-flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-semibold border transition whitespace-nowrap ${
+                widgetCustomizerOpen
+                  ? 'bg-[#47dca0]/18 border-[#47dca0]/55 text-[#8df0c0]'
+                  : 'glass-subcard text-[#eef3fb] hover:border-white/25'
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 text-[#8df0c0]" />
+              <span>Customize widgets</span>
+            </button>
           </div>
         </div>
 
-        <div className="mt-4 h-60 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={monthlyPnL} margin={{ top: 10, right: 12, left: -10, bottom: 0 }}>
-              <CartesianGrid stroke="rgba(255,255,255,0.06)" strokeDasharray="3 3" vertical={false} />
-              <XAxis
-                dataKey="label"
-                tick={{ fill: '#8b9ab0', fontSize: 12 }}
-                axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
-                tickLine={false}
-              />
-              <YAxis
-                tick={{ fill: '#8b9ab0', fontSize: 11, fontFamily: 'JetBrains Mono' }}
-                axisLine={false}
-                tickLine={false}
-                tickFormatter={(v: number) =>
-                  formatMetric(v, activeUnit, activeCurrency, {
-                    decimals: activeUnit === 'money' ? 0 : 1,
-                  })
-                }
-              />
-              <ReferenceLine y={0} stroke="rgba(255,255,255,0.18)" />
-              <Tooltip
-                cursor={{ fill: 'rgba(255,255,255,0.04)' }}
-                content={({ active, payload }) => {
-                  if (!active || !payload || payload.length === 0) return null;
-                  const point = payload[0].payload as MonthlyPnLPoint;
-                  return (
-                    <div className="rounded-xl glass-modal px-3.5 py-2.5 text-xs space-y-1">
-                      <p className="font-bold text-[#eef3fb]">{point.fullLabel}</p>
-                      <p className="text-[#9aa8be] tabular-nums">
-                        Monthly Net:{' '}
-                        <span
-                          className={`font-mono font-bold ${
-                            point.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
-                          }`}
-                        >
-                          {formatMetric(point.netR, activeUnit, activeCurrency)}
-                        </span>
-                      </p>
-                      <p className="text-[#9aa8be] tabular-nums">
-                        6M Cumulative:{' '}
-                        <span className="font-mono font-semibold text-[#8ebeff]">
-                          {formatMetric(point.cumulativeR, activeUnit, activeCurrency)}
-                        </span>
-                      </p>
-                      <p className="text-[#7f8fa8] tabular-nums">
-                        {point.tradesCount} {point.tradesCount === 1 ? 'trade' : 'trades'}
-                        {point.tradesCount > 0 ? ` · ${point.winRate}% WR` : ''}
+        {widgetCustomizerOpen && (
+          <div className="rounded-2xl liquid-glass p-4 sm:p-5 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold text-[#eef3fb]">Visible summary cards</p>
+                <p className="text-[11px] text-[#8b9ab0]">
+                  Toggle which analytical cards appear on your Overview screen.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWidgetCustomizerOpen(false)}
+                className="min-h-[34px] rounded-lg px-2.5 py-1 text-xs font-semibold text-[#9aa8be] hover:text-[#eef3fb] hover:bg-white/[0.06] transition"
+              >
+                Done
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+              {DASHBOARD_WIDGET_OPTIONS.map((widget) => {
+                const enabled = activeWidgets[widget.id];
+                return (
+                  <button
+                    key={widget.id}
+                    type="button"
+                    role="switch"
+                    aria-checked={enabled}
+                    onClick={() => handleToggleWidget(widget.id)}
+                    className={`min-h-[58px] rounded-xl border px-3.5 py-2.5 flex items-center justify-between gap-3 text-left transition ${
+                      enabled
+                        ? 'bg-[#47dca0]/10 border-[#47dca0]/45 text-[#eef3fb]'
+                        : 'bg-white/[0.02] border-white/[0.08] text-[#9aa8be] hover:border-white/20'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold truncate">{widget.label}</p>
+                      <p className="mt-0.5 text-[11px] text-[#7f8fa8] truncate">
+                        {widget.description}
                       </p>
                     </div>
-                  );
-                }}
-              />
-              <Bar dataKey="netR" radius={[6, 6, 0, 0]} maxBarSize={42} animationDuration={240}>
-                {monthlyPnL.map((entry) => (
-                  <Cell
-                    key={entry.monthKey}
-                    fill={
-                      entry.netR > 0
-                        ? '#47dca0'
-                        : entry.netR < 0
-                        ? '#ff7d91'
-                        : 'rgba(255,255,255,0.14)'
-                    }
-                    fillOpacity={entry.tradesCount === 0 ? 0.25 : 0.85}
-                  />
-                ))}
-              </Bar>
-              <Line
-                type="monotone"
-                dataKey="cumulativeR"
-                stroke="#8ebeff"
-                strokeWidth={2}
-                animationDuration={240}
-                dot={{ r: 3, fill: '#8ebeff', strokeWidth: 0 }}
-                activeDot={{ r: 5, fill: '#eef3fb' }}
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
+                    <span
+                      aria-hidden="true"
+                      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                        enabled ? 'bg-[#47dca0]' : 'bg-white/15'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 rounded-full bg-[#060a14] transition-transform ${
+                          enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                        }`}
+                      />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#7f8fa8]">
-          <div className="flex items-center gap-4">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-sm bg-[#47dca0]" />
-              Monthly net {unitShort}
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="h-0.5 w-3.5 bg-[#8ebeff]" />
-              Cumulative 6M growth
+        {visibleWidgetsCount === 0 && (
+          <div className="rounded-2xl glass-card p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-[#eef3fb]">All customizable widgets are hidden</p>
+              <p className="mt-0.5 text-xs text-[#8b9ab0]">
+                Use Customize widgets to turn on Monthly Growth Chart, Top 5 Setup Performance, or Session Win Rate.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleResetWidgets}
+              className="min-h-[40px] inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#47dca0] px-4 py-2 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] transition whitespace-nowrap shrink-0"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Restore all widgets</span>
+            </button>
+          </div>
+        )}
+      </section>
+
+      {/* Widget 1: Recharts 6-Month Monthly PnL Summary Chart */}
+      {activeWidgets.monthlyGrowth && (
+        <section className="rounded-2xl glass-card p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/[0.08]">
+            <div>
+              <p className="text-xs font-medium text-[#8df0c0]">
+                6-month growth
+              </p>
+              <h3 className="text-base font-bold text-[#eef3fb]">
+                Monthly PnL summary (Net {unitShort})
+              </h3>
+            </div>
+            <div className="flex flex-wrap items-center gap-4 text-xs">
+              <span className="text-[#8b9ab0] tabular-nums">
+                6M Net:{' '}
+                <strong
+                  className={`font-mono ${
+                    sixMonthSummary.totalR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
+                  }`}
+                >
+                  {formatMetric(sixMonthSummary.totalR, activeUnit, activeCurrency)}
+                </strong>
+              </span>
+              {sixMonthSummary.best && (
+                <span className="text-[#8b9ab0] tabular-nums">
+                  Best month:{' '}
+                  <strong className="font-mono text-[#8df0c0]">
+                    {sixMonthSummary.best.label} (
+                    {formatMetric(sixMonthSummary.best.netR, activeUnit, activeCurrency)})
+                  </strong>
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4 h-60 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={monthlyPnL} margin={{ top: 10, right: 12, left: -10, bottom: 0 }}>
+                <CartesianGrid stroke="rgba(255,255,255,0.06)" strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fill: '#8b9ab0', fontSize: 12 }}
+                  axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+                  tickLine={false}
+                />
+                <YAxis
+                  tick={{ fill: '#8b9ab0', fontSize: 11, fontFamily: 'JetBrains Mono' }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v: number) =>
+                    formatMetric(v, activeUnit, activeCurrency, {
+                      decimals: activeUnit === 'money' ? 0 : 1,
+                    })
+                  }
+                />
+                <ReferenceLine y={0} stroke="rgba(255,255,255,0.18)" />
+                <Tooltip
+                  cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+                  content={({ active, payload }) => {
+                    if (!active || !payload || payload.length === 0) return null;
+                    const point = payload[0].payload as MonthlyPnLPoint;
+                    return (
+                      <div className="rounded-xl glass-modal px-3.5 py-2.5 text-xs space-y-1">
+                        <p className="font-bold text-[#eef3fb]">{point.fullLabel}</p>
+                        <p className="text-[#9aa8be] tabular-nums">
+                          Monthly Net:{' '}
+                          <span
+                            className={`font-mono font-bold ${
+                              point.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
+                            }`}
+                          >
+                            {formatMetric(point.netR, activeUnit, activeCurrency)}
+                          </span>
+                        </p>
+                        <p className="text-[#9aa8be] tabular-nums">
+                          6M Cumulative:{' '}
+                          <span className="font-mono font-semibold text-[#8ebeff]">
+                            {formatMetric(point.cumulativeR, activeUnit, activeCurrency)}
+                          </span>
+                        </p>
+                        <p className="text-[#7f8fa8] tabular-nums">
+                          {point.tradesCount} {point.tradesCount === 1 ? 'trade' : 'trades'}
+                          {point.tradesCount > 0 ? ` · ${point.winRate}% WR` : ''}
+                        </p>
+                      </div>
+                    );
+                  }}
+                />
+                <Bar dataKey="netR" radius={[6, 6, 0, 0]} maxBarSize={42} animationDuration={240}>
+                  {monthlyPnL.map((entry) => (
+                    <Cell
+                      key={entry.monthKey}
+                      fill={
+                        entry.netR > 0
+                          ? '#47dca0'
+                          : entry.netR < 0
+                          ? '#ff7d91'
+                          : 'rgba(255,255,255,0.14)'
+                      }
+                      fillOpacity={entry.tradesCount === 0 ? 0.25 : 0.85}
+                    />
+                  ))}
+                </Bar>
+                <Line
+                  type="monotone"
+                  dataKey="cumulativeR"
+                  stroke="#8ebeff"
+                  strokeWidth={2}
+                  animationDuration={240}
+                  dot={{ r: 3, fill: '#8ebeff', strokeWidth: 0 }}
+                  activeDot={{ r: 5, fill: '#eef3fb' }}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#7f8fa8]">
+            <div className="flex items-center gap-4">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-sm bg-[#47dca0]" />
+                Monthly net {unitShort}
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-0.5 w-3.5 bg-[#8ebeff]" />
+                Cumulative 6M growth
+              </span>
+            </div>
+            <span>
+              {sixMonthSummary.totalTrades === 0
+                ? `Log executed trades to plot your 6-month ${unitShort} trajectory`
+                : `${sixMonthSummary.totalTrades} executed trades in the last 6 months`}
             </span>
           </div>
-          <span>
-            {sixMonthSummary.totalTrades === 0
-              ? `Log executed trades to plot your 6-month ${unitShort} trajectory`
-              : `${sixMonthSummary.totalTrades} executed trades in the last 6 months`}
-          </span>
-        </div>
-      </section>
+        </section>
+      )}
+
+      {/* Widgets 2 & 3: Top 5 Setup Performance & Session Win Rate */}
+      {(activeWidgets.topSetups || activeWidgets.sessionWinRate) && (
+        <section
+          className={`grid grid-cols-1 ${
+            activeWidgets.topSetups && activeWidgets.sessionWinRate ? 'lg:grid-cols-2' : ''
+          } gap-4 sm:gap-5`}
+        >
+          {activeWidgets.topSetups && (
+            <article className="rounded-2xl glass-card p-5 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between gap-4 pb-3 border-b border-white/[0.08]">
+                  <div>
+                    <p className="text-xs font-medium text-[#8df0c0]">Setup edge</p>
+                    <h3 className="text-base font-bold text-[#eef3fb]">Top 5 Setup Performance</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('analytics')}
+                    className="min-h-[36px] inline-flex items-center gap-1 text-xs font-semibold text-[#8df0c0] hover:text-[#b4f7d8] transition whitespace-nowrap"
+                  >
+                    <span>Analytics</span>
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {topSetups.length === 0 ? (
+                  <div className="py-8 text-center space-y-2.5">
+                    <p className="text-sm font-medium text-[#9aa8be]">
+                      No executed setup data yet.
+                    </p>
+                    <p className="text-xs text-[#6e7e98]">
+                      Log trades with your setup type to rank your top-performing strategies.
+                    </p>
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={onOpenLogTrade}
+                        className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-[#47dca0] px-3.5 py-1.5 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] transition"
+                      >
+                        <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                        <span>Log trade</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-3.5">
+                    {topSetups.map((item, idx) => {
+                      const pct = Math.min(100, (Math.abs(item.netR) / maxTopSetupAbs) * 100);
+                      const negative = item.netR < 0;
+                      return (
+                        <div key={item.label} className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-3 text-xs">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="font-mono text-[11px] font-bold tabular-nums text-[#7989a1]">
+                                #{idx + 1}
+                              </span>
+                              <span className="font-bold text-[#eef3fb] truncate">{item.label}</span>
+                              <span className="text-[#7f8fa8] font-mono tabular-nums whitespace-nowrap">
+                                {item.wins}W · {item.losses}L · {Math.round(item.winRate)}% WR
+                              </span>
+                            </div>
+                            <span
+                              className={`font-mono font-bold tabular-nums shrink-0 ${
+                                negative ? 'text-[#ff7d91]' : 'text-[#47dca0]'
+                              }`}
+                            >
+                              {formatMetric(item.netR, activeUnit, activeCurrency)}
+                            </span>
+                          </div>
+                          <div className="h-2 rounded-full bg-white/[0.06] overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-300 ${
+                                negative ? 'bg-[#ff7d91]' : 'bg-[#47dca0]'
+                              }`}
+                              style={{ width: `${Math.max(5, pct)}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </article>
+          )}
+
+          {activeWidgets.sessionWinRate && (
+            <article className="rounded-2xl glass-card p-5 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between gap-4 pb-3 border-b border-white/[0.08]">
+                  <div>
+                    <p className="text-xs font-medium text-[#8df0c0]">Timing accuracy</p>
+                    <h3 className="text-base font-bold text-[#eef3fb]">Session Win Rate</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('analytics')}
+                    className="min-h-[36px] inline-flex items-center gap-1 text-xs font-semibold text-[#8df0c0] hover:text-[#b4f7d8] transition whitespace-nowrap"
+                  >
+                    <span>Analytics</span>
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {sessionWinRates.length === 0 ? (
+                  <div className="py-8 text-center space-y-2.5">
+                    <p className="text-sm font-medium text-[#9aa8be]">
+                      No session statistics yet.
+                    </p>
+                    <p className="text-xs text-[#6e7e98]">
+                      Track trades across London, New York, Asia, or Overlap to measure session win rates.
+                    </p>
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={onOpenLogTrade}
+                        className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-[#47dca0] px-3.5 py-1.5 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] transition"
+                      >
+                        <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                        <span>Log trade</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-3.5">
+                    {sessionWinRates.map((item, idx) => {
+                      const wr = Math.round(item.winRate);
+                      const isStrong = wr >= 50;
+                      return (
+                        <div key={item.label} className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-3 text-xs">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="font-bold text-[#eef3fb] truncate">
+                                {item.label}
+                              </span>
+                              {idx === 0 && sessionWinRates.length > 1 && (
+                                <span className="text-[11px] font-semibold text-[#8df0c0] whitespace-nowrap">
+                                  · Highest WR
+                                </span>
+                              )}
+                              <span className="text-[#7f8fa8] font-mono tabular-nums whitespace-nowrap">
+                                {item.wins}W · {item.losses}L ({item.count})
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2.5 shrink-0 font-mono tabular-nums">
+                              <span
+                                className={`text-[11px] font-semibold ${
+                                  item.netR < 0 ? 'text-[#ff7d91]' : 'text-[#8ebeff]'
+                                }`}
+                              >
+                                {formatMetric(item.netR, activeUnit, activeCurrency)}
+                              </span>
+                              <span
+                                className={`font-bold ${
+                                  isStrong ? 'text-[#47dca0]' : 'text-[#eef3fb]'
+                                }`}
+                              >
+                                {wr}%
+                              </span>
+                            </div>
+                          </div>
+                          <div className="h-2 rounded-full bg-white/[0.06] overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-300 ${
+                                isStrong ? 'bg-[#47dca0]' : 'bg-[#8ebeff]'
+                              }`}
+                              style={{ width: `${Math.max(4, Math.min(100, item.winRate))}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </article>
+          )}
+        </section>
+      )}
+
 
       {/* Recent Executions + Daily Motivational Quote */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5">

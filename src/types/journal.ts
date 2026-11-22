@@ -98,6 +98,10 @@ export interface JournalSettings {
   currency?: string;
 }
 
+export type DashboardWidgetId = 'monthlyGrowth' | 'topSetups' | 'sessionWinRate';
+
+export type DashboardWidgetsConfig = Record<DashboardWidgetId, boolean>;
+
 export interface JournalState {
   trades: Trade[];
   models: TradingModel[];

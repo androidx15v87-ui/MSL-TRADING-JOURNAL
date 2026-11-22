@@ -6,6 +6,8 @@ import {
   formatMetric,
   formatTime,
   formatTradePnL,
+  getMostProfitableWeekday,
+  groupPerformanceByWeekday,
   isoDate,
 } from '../lib/calculations';
 import type { JournalSettings, Trade } from '../types/journal';
@@ -31,6 +33,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
   const [selectedDate, setSelectedDate] = useState<string>(todayIso);
+  const [weekdayScope, setWeekdayScope] = useState<'month' | 'all'>('month');
 
   const tradesByDate = useMemo(() => {
     const map = new Map<string, Trade[]>();
@@ -103,6 +106,33 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
     setViewMonth(new Date(now.getFullYear(), now.getMonth(), 1));
     setSelectedDate(isoDate(now));
   };
+
+  const viewMonthPrefix = `${viewMonth.getFullYear()}-${String(viewMonth.getMonth() + 1).padStart(2, '0')}`;
+
+  const weekdayAnalytics = useMemo(() => {
+    const scopedTrades =
+      weekdayScope === 'month'
+        ? trades.filter((t) => (t.date || '').slice(0, 7) === viewMonthPrefix)
+        : trades;
+
+    const scopedStats = calculateStats(scopedTrades, {
+      defaultUnit: settings?.defaultPnlUnit,
+      defaultCurrency: settings?.currency,
+    });
+    const unitFilter = scopedStats.isMixedUnits ? scopedStats.primaryUnit : undefined;
+    const days = groupPerformanceByWeekday(scopedTrades, unitFilter);
+    const bestDay = getMostProfitableWeekday(days);
+
+    return {
+      days,
+      bestDay,
+      totalWins: scopedStats.wins.length,
+      totalLosses: scopedStats.losses.length,
+      totalExecuted: scopedStats.totalTrades,
+      primaryUnit: scopedStats.primaryUnit,
+      primaryCurrency: scopedStats.primaryCurrency,
+    };
+  }, [trades, weekdayScope, viewMonthPrefix, settings?.defaultPnlUnit, settings?.currency]);
 
   return (
     <div className="space-y-5">
@@ -370,6 +400,154 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
           </button>
         </article>
       </div>
+
+      {/* Day-of-Week Wins & Losses Breakdown (Monday to Sunday) */}
+      <section className="rounded-2xl glass-card p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/[0.08]">
+          <div>
+            <p className="text-xs font-medium text-[#8df0c0]">
+              Monday – Sunday breakdown
+            </p>
+            <h3 className="text-base font-bold text-[#eef3fb]">
+              Wins &amp; losses by day of the week
+            </h3>
+            <p className="mt-0.5 text-xs text-[#8b9ab0] tabular-nums">
+              {weekdayScope === 'month' ? monthTitle : 'All recorded trades'} ·{' '}
+              <span className="text-[#47dca0] font-semibold font-mono">
+                {weekdayAnalytics.totalWins}W
+              </span>{' '}
+              /{' '}
+              <span className="text-[#ff7d91] font-semibold font-mono">
+                {weekdayAnalytics.totalLosses}L
+              </span>{' '}
+              across {weekdayAnalytics.totalExecuted} executed
+              {weekdayAnalytics.bestDay && weekdayAnalytics.bestDay.netR > 0 && (
+                <>
+                  {' · '}Most profitable:{' '}
+                  <strong className="text-[#8df0c0]">{weekdayAnalytics.bestDay.fullLabel}</strong>
+                </>
+              )}
+            </p>
+          </div>
+
+          <div
+            role="group"
+            aria-label="Weekday summary scope"
+            className="inline-flex items-center rounded-xl glass-subcard p-1 self-start sm:self-auto shrink-0"
+          >
+            <button
+              type="button"
+              onClick={() => setWeekdayScope('month')}
+              className={`min-h-[34px] rounded-lg px-3 py-1 text-xs font-semibold transition whitespace-nowrap ${
+                weekdayScope === 'month'
+                  ? 'bg-[#47dca0]/20 text-[#8df0c0]'
+                  : 'text-[#8b9ab0] hover:text-[#eef3fb]'
+              }`}
+            >
+              This month
+            </button>
+            <button
+              type="button"
+              onClick={() => setWeekdayScope('all')}
+              className={`min-h-[34px] rounded-lg px-3 py-1 text-xs font-semibold transition whitespace-nowrap ${
+                weekdayScope === 'all'
+                  ? 'bg-[#47dca0]/20 text-[#8df0c0]'
+                  : 'text-[#8b9ab0] hover:text-[#eef3fb]'
+              }`}
+            >
+              All time
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
+          {weekdayAnalytics.days.map((day) => {
+            const isTop =
+              Boolean(weekdayAnalytics.bestDay) &&
+              weekdayAnalytics.bestDay!.dayIndex === day.dayIndex &&
+              day.netR > 0;
+            const winShare =
+              day.wins + day.losses > 0 ? (day.wins / (day.wins + day.losses)) * 100 : 0;
+            const hasWL = day.wins + day.losses > 0;
+
+            return (
+              <div
+                key={day.dayIndex}
+                className={`rounded-xl border p-3 flex flex-col justify-between gap-2.5 transition ${
+                  isTop
+                    ? 'bg-[#47dca0]/[0.08] border-[#47dca0]/45'
+                    : 'bg-white/[0.025] border-white/[0.08]'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-xs font-bold text-[#eef3fb]">{day.shortLabel}</span>
+                  {isTop ? (
+                    <span className="text-[10px] font-semibold text-[#8df0c0]">Top</span>
+                  ) : (
+                    <span className="font-mono text-[10px] tabular-nums text-[#70819b]">
+                      {day.executedCount > 0 ? `${Math.round(day.winRate)}% WR` : '—'}
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-baseline justify-between gap-2 font-mono tabular-nums">
+                    <span className="text-sm font-bold text-[#47dca0]">{day.wins}W</span>
+                    <span className="text-sm font-bold text-[#ff7d91]">{day.losses}L</span>
+                  </div>
+                  {(day.breakevens > 0 || day.missed > 0) && (
+                    <p className="font-mono text-[10px] tabular-nums text-[#7c8ca6]">
+                      {day.breakevens > 0 ? `${day.breakevens} BE` : ''}
+                      {day.breakevens > 0 && day.missed > 0 ? ' · ' : ''}
+                      {day.missed > 0 ? `${day.missed} missed` : ''}
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="h-1.5 w-full rounded-full bg-white/[0.06] overflow-hidden flex">
+                    {hasWL ? (
+                      <>
+                        <div
+                          className="h-full bg-[#47dca0]"
+                          style={{ width: `${winShare}%` }}
+                        />
+                        <div
+                          className="h-full bg-[#ff7d91]"
+                          style={{ width: `${100 - winShare}%` }}
+                        />
+                      </>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center justify-between gap-1 text-[11px] font-mono tabular-nums">
+                    <span className="text-[#7c8ca6]">Net</span>
+                    <span
+                      className={`font-bold ${
+                        day.unitMatchedCount === 0
+                          ? 'text-[#6c7d96]'
+                          : day.netR > 0
+                          ? 'text-[#47dca0]'
+                          : day.netR < 0
+                          ? 'text-[#ff7d91]'
+                          : 'text-[#8ebeff]'
+                      }`}
+                    >
+                      {day.unitMatchedCount > 0
+                        ? formatMetric(
+                            day.netR,
+                            weekdayAnalytics.primaryUnit,
+                            weekdayAnalytics.primaryCurrency,
+                            { decimals: weekdayAnalytics.primaryUnit === 'money' ? 0 : 2 }
+                          )
+                        : '—'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 });

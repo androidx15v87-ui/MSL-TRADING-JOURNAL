@@ -14,10 +14,12 @@ import {
   formatDate,
   formatMetric,
   formatTradePnL,
+  getMostProfitableWeekday,
   getUnitLongLabel,
   getUnitShortLabel,
   groupPerformance,
   groupPerformanceByTag,
+  groupPerformanceByWeekday,
   normalizeMetricUnit,
 } from '../lib/calculations';
 import type { JournalSettings, MetricUnit, Trade } from '../types/journal';
@@ -62,6 +64,14 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
     () => groupPerformanceByTag(trades, unitFilter),
     [trades, unitFilter]
   );
+  const byWeekday = useMemo(
+    () => groupPerformanceByWeekday(trades, unitFilter),
+    [trades, unitFilter]
+  );
+  const mostProfitableWeekday = useMemo(
+    () => getMostProfitableWeekday(byWeekday),
+    [byWeekday]
+  );
 
   const recentTrades = useMemo(() => {
     const unitMatched = unitFilter
@@ -98,6 +108,7 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
   const maxSetupAbs = Math.max(0.1, ...bySetup.map((x) => Math.abs(x.netR)));
   const maxSessionAbs = Math.max(0.1, ...bySession.map((x) => Math.abs(x.netR)));
   const maxTagAbs = Math.max(0.1, ...byTag.map((x) => Math.abs(x.netR)));
+  const maxWeekdayAbs = Math.max(0.1, ...byWeekday.map((x) => Math.abs(x.netR)));
   const maxRecentAbs = Math.max(1, ...recentTrades.map((t) => Math.abs(Number(t.r || 0))));
 
   const finalEquityR =
@@ -380,6 +391,123 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
           </div>
         </article>
       )}
+
+      {/* Performance by Day of the Week (Monday - Sunday) & Most Profitable Day Highlight */}
+      <section aria-label="Day of week performance" className="rounded-2xl glass-card p-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-white/[0.08]">
+          <div>
+            <p className="text-xs font-medium text-[#8df0c0]">
+              Monday – Sunday edge
+            </p>
+            <h3 className="text-base font-bold text-[#eef3fb]">
+              Performance by day of the week
+            </h3>
+            <p className="mt-0.5 text-xs text-[#8b9ab0]">
+              Wins, losses, win rate, and net {unitShort} calculated across every weekday.
+            </p>
+          </div>
+
+          <div className="rounded-xl liquid-glass px-4 py-3 flex items-center justify-between gap-5 shrink-0">
+            <div>
+              <p className="text-[11px] font-medium text-[#8b9ab0]">
+                {mostProfitableWeekday && mostProfitableWeekday.netR <= 0
+                  ? 'Strongest relative day'
+                  : 'Most profitable day'}
+              </p>
+              <p className="mt-0.5 font-display text-lg font-extrabold text-[#eef3fb]">
+                {mostProfitableWeekday ? mostProfitableWeekday.fullLabel : '—'}
+              </p>
+              {mostProfitableWeekday && (
+                <p className="mt-0.5 text-[11px] font-mono tabular-nums text-[#8b9ab0]">
+                  {mostProfitableWeekday.wins}W · {mostProfitableWeekday.losses}L ·{' '}
+                  {Math.round(mostProfitableWeekday.winRate)}% WR
+                </p>
+              )}
+            </div>
+            {mostProfitableWeekday && (
+              <div className="text-right font-mono tabular-nums">
+                <p
+                  className={`text-lg font-bold ${
+                    mostProfitableWeekday.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
+                  }`}
+                >
+                  {formatMetric(mostProfitableWeekday.netR, activeUnit, activeCurrency)}
+                </p>
+                <p className="text-[11px] text-[#7f8fa8]">Net {unitShort}</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          {byWeekday.map((day) => {
+            const pct = Math.min(100, (Math.abs(day.netR) / maxWeekdayAbs) * 100);
+            const isTop =
+              Boolean(mostProfitableWeekday) &&
+              mostProfitableWeekday!.dayIndex === day.dayIndex;
+            const isNegative = day.netR < 0;
+            const hasTrades = day.unitMatchedCount > 0;
+
+            return (
+              <div
+                key={day.dayIndex}
+                className={`rounded-xl px-3 py-2.5 transition ${
+                  isTop && day.netR > 0
+                    ? 'bg-[#47dca0]/[0.07] border border-[#47dca0]/35'
+                    : 'bg-white/[0.02] border border-white/[0.06]'
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs mb-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-bold text-[#eef3fb] w-24 shrink-0">
+                      {day.fullLabel}
+                    </span>
+                    {isTop && day.netR > 0 && (
+                      <span className="text-[11px] font-semibold text-[#8df0c0]">
+                        · Most profitable
+                      </span>
+                    )}
+                    <span className="font-mono tabular-nums text-[#8b9ab0]">
+                      <span className="text-[#47dca0] font-semibold">{day.wins}W</span>
+                      {' · '}
+                      <span className="text-[#ff7d91] font-semibold">{day.losses}L</span>
+                      {day.breakevens > 0 ? ` · ${day.breakevens}BE` : ''}
+                      {day.executedCount > 0
+                        ? ` · ${Math.round(day.winRate)}% WR`
+                        : ' · No executed trades'}
+                    </span>
+                  </div>
+
+                  <span
+                    className={`font-mono font-bold tabular-nums shrink-0 ${
+                      !hasTrades
+                        ? 'text-[#6c7d96]'
+                        : isNegative
+                        ? 'text-[#ff7d91]'
+                        : day.netR > 0
+                        ? 'text-[#47dca0]'
+                        : 'text-[#8ebeff]'
+                    }`}
+                  >
+                    {hasTrades ? formatMetric(day.netR, activeUnit, activeCurrency) : '—'}
+                  </span>
+                </div>
+
+                <div className="h-2 rounded-full bg-white/[0.06] overflow-hidden">
+                  {hasTrades && day.netR !== 0 && (
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        isNegative ? 'bg-[#ff7d91]' : 'bg-[#47dca0]'
+                      }`}
+                      style={{ width: `${Math.max(4, pct)}%` }}
+                    />
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
 
       {/* Net PnL by Setup, Session & Behavioral Tags */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5">

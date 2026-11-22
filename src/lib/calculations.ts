@@ -342,6 +342,8 @@ export interface GroupPerformance {
   label: string;
   netR: number;
   count: number;
+  wins: number;
+  losses: number;
   winRate: number;
 }
 
@@ -350,17 +352,18 @@ export function groupPerformance(
   key: 'setup' | 'session' | 'direction',
   unitFilter?: MetricUnit
 ): GroupPerformance[] {
-  const map = new Map<string, { netR: number; count: number; wins: number }>();
+  const map = new Map<string, { netR: number; count: number; wins: number; losses: number }>();
 
   for (const t of trades) {
     if (t.result === 'Missed') continue;
     if (unitFilter && normalizeMetricUnit(t.pnlUnit, 'r') !== unitFilter) continue;
     const label = String(t[key] || 'Unspecified');
-    const prev = map.get(label) || { netR: 0, count: 0, wins: 0 };
+    const prev = map.get(label) || { netR: 0, count: 0, wins: 0, losses: 0 };
     map.set(label, {
       netR: prev.netR + Number(t.r || 0),
       count: prev.count + 1,
       wins: prev.wins + (t.result === 'Win' ? 1 : 0),
+      losses: prev.losses + (t.result === 'Loss' ? 1 : 0),
     });
   }
 
@@ -369,6 +372,8 @@ export function groupPerformance(
       label,
       netR: data.netR,
       count: data.count,
+      wins: data.wins,
+      losses: data.losses,
       winRate: data.count > 0 ? (data.wins / data.count) * 100 : 0,
     }))
     .sort((a, b) => b.netR - a.netR);
@@ -378,7 +383,7 @@ export function groupPerformanceByTag(
   trades: Trade[],
   unitFilter?: MetricUnit
 ): GroupPerformance[] {
-  const map = new Map<string, { netR: number; count: number; wins: number }>();
+  const map = new Map<string, { netR: number; count: number; wins: number; losses: number }>();
 
   for (const t of trades) {
     if (t.result === 'Missed') continue;
@@ -387,11 +392,12 @@ export function groupPerformanceByTag(
     for (const rawTag of tags) {
       const label = rawTag.trim();
       if (!label) continue;
-      const prev = map.get(label) || { netR: 0, count: 0, wins: 0 };
+      const prev = map.get(label) || { netR: 0, count: 0, wins: 0, losses: 0 };
       map.set(label, {
         netR: prev.netR + Number(t.r || 0),
         count: prev.count + 1,
         wins: prev.wins + (t.result === 'Win' ? 1 : 0),
+        losses: prev.losses + (t.result === 'Loss' ? 1 : 0),
       });
     }
   }
@@ -401,9 +407,117 @@ export function groupPerformanceByTag(
       label,
       netR: data.netR,
       count: data.count,
+      wins: data.wins,
+      losses: data.losses,
       winRate: data.count > 0 ? (data.wins / data.count) * 100 : 0,
     }))
     .sort((a, b) => b.netR - a.netR);
+}
+
+export interface WeekdayPerformance {
+  dayIndex: number; // 0 = Monday ... 6 = Sunday
+  shortLabel: string; // 'Mon' ... 'Sun'
+  fullLabel: string; // 'Monday' ... 'Sunday'
+  wins: number;
+  losses: number;
+  breakevens: number;
+  missed: number;
+  executedCount: number;
+  winRate: number;
+  netR: number;
+  grossWin: number;
+  grossLoss: number;
+  unitMatchedCount: number;
+}
+
+const WEEKDAY_META: ReadonlyArray<{ shortLabel: string; fullLabel: string }> = [
+  { shortLabel: 'Mon', fullLabel: 'Monday' },
+  { shortLabel: 'Tue', fullLabel: 'Tuesday' },
+  { shortLabel: 'Wed', fullLabel: 'Wednesday' },
+  { shortLabel: 'Thu', fullLabel: 'Thursday' },
+  { shortLabel: 'Fri', fullLabel: 'Friday' },
+  { shortLabel: 'Sat', fullLabel: 'Saturday' },
+  { shortLabel: 'Sun', fullLabel: 'Sunday' },
+];
+
+export function groupPerformanceByWeekday(
+  trades: Trade[],
+  unitFilter?: MetricUnit
+): WeekdayPerformance[] {
+  const buckets: WeekdayPerformance[] = WEEKDAY_META.map((meta, dayIndex) => ({
+    dayIndex,
+    shortLabel: meta.shortLabel,
+    fullLabel: meta.fullLabel,
+    wins: 0,
+    losses: 0,
+    breakevens: 0,
+    missed: 0,
+    executedCount: 0,
+    winRate: 0,
+    netR: 0,
+    grossWin: 0,
+    grossLoss: 0,
+    unitMatchedCount: 0,
+  }));
+
+  for (const t of trades) {
+    if (!t.date) continue;
+    const normalized = t.date.length >= 10 ? `${t.date.slice(0, 10)}T12:00:00` : t.date;
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) continue;
+
+    const dayIndex = (parsed.getDay() + 6) % 7;
+    const bucket = buckets[dayIndex];
+    if (!bucket) continue;
+
+    if (t.result === 'Missed') {
+      bucket.missed += 1;
+      continue;
+    }
+
+    bucket.executedCount += 1;
+    if (t.result === 'Win') bucket.wins += 1;
+    else if (t.result === 'Loss') bucket.losses += 1;
+    else bucket.breakevens += 1;
+
+    if (!unitFilter || normalizeMetricUnit(t.pnlUnit, 'r') === unitFilter) {
+      const val = Number(t.r || 0);
+      bucket.unitMatchedCount += 1;
+      bucket.netR += val;
+      if (t.result === 'Win' && val > 0) bucket.grossWin += val;
+      else if (t.result === 'Loss' && val < 0) bucket.grossLoss += Math.abs(val);
+      else if (val > 0) bucket.grossWin += val;
+      else if (val < 0) bucket.grossLoss += Math.abs(val);
+    }
+  }
+
+  for (const b of buckets) {
+    b.winRate = b.executedCount > 0 ? (b.wins / b.executedCount) * 100 : 0;
+    b.netR = Math.round(b.netR * 100) / 100;
+    b.grossWin = Math.round(b.grossWin * 100) / 100;
+    b.grossLoss = Math.round(b.grossLoss * 100) / 100;
+  }
+
+  return buckets;
+}
+
+export function getMostProfitableWeekday(
+  weekdays: WeekdayPerformance[]
+): WeekdayPerformance | null {
+  let best: WeekdayPerformance | null = null;
+  for (const day of weekdays) {
+    if (day.unitMatchedCount === 0) continue;
+    if (
+      !best ||
+      day.netR > best.netR ||
+      (day.netR === best.netR &&
+        (day.winRate > best.winRate ||
+          (day.winRate === best.winRate && day.wins > best.wins)))
+    ) {
+      best = day;
+    }
+  }
+  return best;
 }
 
 export function getAllTradeTags(trades: Trade[]): { tag: string; count: number }[] {
