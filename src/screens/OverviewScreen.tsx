@@ -7,8 +7,6 @@ import {
   Copy,
   Plus,
   RefreshCw,
-  RotateCcw,
-  SlidersHorizontal,
 } from 'lucide-react';
 import {
   Bar,
@@ -37,10 +35,7 @@ import {
   normalizeMetricUnit,
   type MonthlyPnLPoint,
 } from '../lib/calculations';
-import { DEFAULT_DASHBOARD_WIDGETS } from '../lib/db';
 import type {
-  DashboardWidgetId,
-  DashboardWidgetsConfig,
   JournalSettings,
   MetricUnit,
   PageId,
@@ -53,9 +48,6 @@ interface OverviewScreenProps {
   alarms: SessionAlarm[];
   settings?: JournalSettings;
   quote: QuoteItem;
-  widgetVisibility?: DashboardWidgetsConfig;
-  onToggleWidget?: (id: DashboardWidgetId) => void;
-  onResetWidgets?: () => void;
   onNextQuote: () => void;
   onCopyQuote: () => void;
   onOpenLogTrade: () => void;
@@ -63,36 +55,11 @@ interface OverviewScreenProps {
   onSelectTrade: (trade: Trade) => void;
 }
 
-const DASHBOARD_WIDGET_OPTIONS: ReadonlyArray<{
-  id: DashboardWidgetId;
-  label: string;
-  description: string;
-}> = [
-  {
-    id: 'monthlyGrowth',
-    label: 'Monthly Growth Chart',
-    description: '6-month net P&L bars & cumulative curve',
-  },
-  {
-    id: 'topSetups',
-    label: 'Top 5 Setup Performance',
-    description: 'Highest-performing setups by net return',
-  },
-  {
-    id: 'sessionWinRate',
-    label: 'Session Win Rate',
-    description: 'Win rates & W/L breakdown by session',
-  },
-];
-
 export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
   trades,
   alarms,
   settings,
   quote,
-  widgetVisibility,
-  onToggleWidget,
-  onResetWidgets,
   onNextQuote,
   onCopyQuote,
   onOpenLogTrade,
@@ -100,33 +67,6 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
   onSelectTrade,
 }) => {
   const [selectedUnit, setSelectedUnit] = useState<MetricUnit | undefined>(undefined);
-  const [widgetCustomizerOpen, setWidgetCustomizerOpen] = useState(false);
-  const [fallbackWidgets, setFallbackWidgets] = useState<DashboardWidgetsConfig>(() => ({
-    ...DEFAULT_DASHBOARD_WIDGETS,
-  }));
-
-  const activeWidgets = widgetVisibility ?? fallbackWidgets;
-
-  const handleToggleWidget = (id: DashboardWidgetId) => {
-    if (onToggleWidget) {
-      onToggleWidget(id);
-      return;
-    }
-    setFallbackWidgets((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  const handleResetWidgets = () => {
-    if (onResetWidgets) {
-      onResetWidgets();
-      return;
-    }
-    setFallbackWidgets({ ...DEFAULT_DASHBOARD_WIDGETS });
-  };
-
-  const visibleWidgetsCount = useMemo(
-    () => DASHBOARD_WIDGET_OPTIONS.filter((w) => activeWidgets[w.id]).length,
-    [activeWidgets]
-  );
 
   const stats = useMemo(
     () =>
@@ -475,123 +415,8 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
         </article>
       </section>
 
-      {/* User-Customizable Dashboard Widget Selector */}
-      <section aria-label="Dashboard widgets" className="space-y-3.5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-baseline gap-2.5">
-            <h3 className="text-sm font-bold text-[#eef3fb]">Performance widgets</h3>
-            <span className="text-xs text-[#7f8fa8] font-mono tabular-nums">
-              {visibleWidgetsCount} of {DASHBOARD_WIDGET_OPTIONS.length} shown
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            {visibleWidgetsCount < DASHBOARD_WIDGET_OPTIONS.length && (
-              <button
-                type="button"
-                onClick={handleResetWidgets}
-                className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl glass-subcard px-3 py-1.5 text-xs font-semibold text-[#8df0c0] hover:border-[#47dca0]/45 transition whitespace-nowrap"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Show all</span>
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => setWidgetCustomizerOpen((prev) => !prev)}
-              aria-expanded={widgetCustomizerOpen}
-              className={`min-h-[38px] inline-flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-semibold border transition whitespace-nowrap ${
-                widgetCustomizerOpen
-                  ? 'bg-[#47dca0]/18 border-[#47dca0]/55 text-[#8df0c0]'
-                  : 'glass-subcard text-[#eef3fb] hover:border-white/25'
-              }`}
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5 text-[#8df0c0]" />
-              <span>Customize widgets</span>
-            </button>
-          </div>
-        </div>
-
-        {widgetCustomizerOpen && (
-          <div className="rounded-2xl liquid-glass p-4 sm:p-5 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold text-[#eef3fb]">Visible summary cards</p>
-                <p className="text-[11px] text-[#8b9ab0]">
-                  Toggle which analytical cards appear on your Overview screen.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setWidgetCustomizerOpen(false)}
-                className="min-h-[34px] rounded-lg px-2.5 py-1 text-xs font-semibold text-[#9aa8be] hover:text-[#eef3fb] hover:bg-white/[0.06] transition"
-              >
-                Done
-              </button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-              {DASHBOARD_WIDGET_OPTIONS.map((widget) => {
-                const enabled = activeWidgets[widget.id];
-                return (
-                  <button
-                    key={widget.id}
-                    type="button"
-                    role="switch"
-                    aria-checked={enabled}
-                    onClick={() => handleToggleWidget(widget.id)}
-                    className={`min-h-[58px] rounded-xl border px-3.5 py-2.5 flex items-center justify-between gap-3 text-left transition ${
-                      enabled
-                        ? 'bg-[#47dca0]/10 border-[#47dca0]/45 text-[#eef3fb]'
-                        : 'bg-white/[0.02] border-white/[0.08] text-[#9aa8be] hover:border-white/20'
-                    }`}
-                  >
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold truncate">{widget.label}</p>
-                      <p className="mt-0.5 text-[11px] text-[#7f8fa8] truncate">
-                        {widget.description}
-                      </p>
-                    </div>
-                    <span
-                      aria-hidden="true"
-                      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-                        enabled ? 'bg-[#47dca0]' : 'bg-white/15'
-                      }`}
-                    >
-                      <span
-                        className={`inline-block h-3.5 w-3.5 rounded-full bg-[#060a14] transition-transform ${
-                          enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
-                        }`}
-                      />
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {visibleWidgetsCount === 0 && (
-          <div className="rounded-2xl glass-card p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-[#eef3fb]">All customizable widgets are hidden</p>
-              <p className="mt-0.5 text-xs text-[#8b9ab0]">
-                Use Customize widgets to turn on Monthly Growth Chart, Top 5 Setup Performance, or Session Win Rate.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleResetWidgets}
-              className="min-h-[40px] inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#47dca0] px-4 py-2 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] transition whitespace-nowrap shrink-0"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Restore all widgets</span>
-            </button>
-          </div>
-        )}
-      </section>
-
-      {/* Widget 1: Recharts 6-Month Monthly PnL Summary Chart */}
-      {activeWidgets.monthlyGrowth && (
-        <section className="rounded-2xl glass-card p-5">
+      {/* Recharts 6-Month Monthly PnL Summary Chart */}
+      <section className="rounded-2xl glass-card p-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/[0.08]">
             <div>
               <p className="text-xs font-medium text-[#8df0c0]">
@@ -722,18 +547,11 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
                 : `${sixMonthSummary.totalTrades} executed trades in the last 6 months`}
             </span>
           </div>
-        </section>
-      )}
+      </section>
 
-      {/* Widgets 2 & 3: Top 5 Setup Performance & Session Win Rate */}
-      {(activeWidgets.topSetups || activeWidgets.sessionWinRate) && (
-        <section
-          className={`grid grid-cols-1 ${
-            activeWidgets.topSetups && activeWidgets.sessionWinRate ? 'lg:grid-cols-2' : ''
-          } gap-4 sm:gap-5`}
-        >
-          {activeWidgets.topSetups && (
-            <article className="rounded-2xl glass-card p-5 flex flex-col justify-between">
+      {/* Top 5 Setup Performance & Session Win Rate */}
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
+        <article className="rounded-2xl glass-card p-5 flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between gap-4 pb-3 border-b border-white/[0.08]">
                   <div>
@@ -809,10 +627,8 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
                 )}
               </div>
             </article>
-          )}
 
-          {activeWidgets.sessionWinRate && (
-            <article className="rounded-2xl glass-card p-5 flex flex-col justify-between">
+        <article className="rounded-2xl glass-card p-5 flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between gap-4 pb-3 border-b border-white/[0.08]">
                   <div>
@@ -901,9 +717,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
                 )}
               </div>
             </article>
-          )}
-        </section>
-      )}
+      </section>
 
 
       {/* Recent Executions + Daily Motivational Quote */}

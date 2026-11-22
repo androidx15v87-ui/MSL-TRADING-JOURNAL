@@ -59,15 +59,11 @@ import {
   subscribeToCloudMemories,
 } from './lib/cloudSync';
 import {
-  DEFAULT_DASHBOARD_WIDGETS,
   buildBackupPayload,
   clearAllJournalData,
   deleteTradeRecord,
-  loadDashboardWidgets,
   loadJournalState,
   loadPlaybookChecks,
-  readDashboardWidgetsSync,
-  saveDashboardWidgets,
   saveFullJournalState,
   saveKV,
   savePlaybookChecks,
@@ -86,8 +82,6 @@ import type {
   AIMemoryCategory,
   AIMemoryItem,
   CustomField,
-  DashboardWidgetId,
-  DashboardWidgetsConfig,
   Direction,
   JournalSettings,
   JournalState,
@@ -204,9 +198,6 @@ export default function App() {
   const [memories, setMemories] = useState<AIMemoryItem[]>(() => loadAIMemories());
   const [quote, setQuote] = useState<QuoteItem>(() => randomQuote());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [dashboardWidgets, setDashboardWidgets] = useState<DashboardWidgetsConfig>(() =>
-    readDashboardWidgetsSync(null)
-  );
 
   // Modals
   const [tradeModalOpen, setTradeModalOpen] = useState(false);
@@ -276,11 +267,10 @@ export default function App() {
   // Hydrate full journal state from IndexedDB on boot
   useEffect(() => {
     let active = true;
-    Promise.all([loadJournalState(), loadDashboardWidgets(null)])
-      .then(([loaded, widgets]) => {
+    loadJournalState()
+      .then((loaded) => {
         if (!active) return;
         setState(loaded);
-        setDashboardWidgets(widgets);
         syncNativeAlarms(loaded.alarms);
         setHydrated(true);
       })
@@ -326,9 +316,6 @@ export default function App() {
       void loadPlaybookChecks(null).then((localChecks) => {
         setState((prev) => ({ ...prev, playbookChecks: localChecks }));
       });
-      void loadDashboardWidgets(null).then((localWidgets) => {
-        setDashboardWidgets(localWidgets);
-      });
       return;
     }
 
@@ -341,10 +328,6 @@ export default function App() {
     void loadPlaybookChecks(user.uid).then((userChecks) => {
       if (cancelled) return;
       setState((prev) => ({ ...prev, playbookChecks: userChecks }));
-    });
-    void loadDashboardWidgets(user.uid).then((userWidgets) => {
-      if (cancelled) return;
-      setDashboardWidgets(userWidgets);
     });
 
     const initCloud = async () => {
@@ -1373,20 +1356,6 @@ export default function App() {
     }
   };
 
-  const handleToggleDashboardWidget = useCallback((id: DashboardWidgetId) => {
-    setDashboardWidgets((prev) => {
-      const next = { ...prev, [id]: !prev[id] };
-      void saveDashboardWidgets(next, userRef.current?.uid).catch(() => {});
-      return next;
-    });
-  }, []);
-
-  const handleResetDashboardWidgets = useCallback(() => {
-    const next = { ...DEFAULT_DASHBOARD_WIDGETS };
-    setDashboardWidgets(next);
-    void saveDashboardWidgets(next, userRef.current?.uid).catch(() => {});
-  }, []);
-
   return (
     <>
       {/* Two-Part 6-Second Liquid-Glass Entry Animation (Zero App Version Shown) */}
@@ -1641,9 +1610,6 @@ export default function App() {
                       alarms={state.alarms}
                       settings={state.settings}
                       quote={quote}
-                      widgetVisibility={dashboardWidgets}
-                      onToggleWidget={handleToggleDashboardWidget}
-                      onResetWidgets={handleResetDashboardWidgets}
                       onNextQuote={handleCycleQuote}
                       onCopyQuote={handleCopyQuote}
                       onOpenLogTrade={() => handleOpenNewTrade()}
