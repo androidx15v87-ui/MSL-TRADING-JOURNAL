@@ -29,7 +29,6 @@ import {
   formatTradePnL,
   getUnitLongLabel,
   getUnitShortLabel,
-  groupPerformance,
   groupPerformanceByTag,
   isoDate,
   normalizeMetricUnit,
@@ -163,22 +162,6 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
     );
     return { totalR, totalTrades, best };
   }, [monthlyPnL]);
-
-  const topSetups = useMemo(
-    () => groupPerformance(trades, 'setup', unitFilter).slice(0, 5),
-    [trades, unitFilter]
-  );
-
-  const maxTopSetupAbs = useMemo(
-    () => Math.max(0.1, ...topSetups.map((item) => Math.abs(item.netR))),
-    [topSetups]
-  );
-
-  const sessionWinRates = useMemo(() => {
-    return groupPerformance(trades, 'session', unitFilter).sort(
-      (a, b) => b.winRate - a.winRate || b.netR - a.netR || b.count - a.count
-    );
-  }, [trades, unitFilter]);
 
   const topTagEdge = useMemo(() => {
     const grouped = groupPerformanceByTag(trades, unitFilter);
@@ -548,177 +531,6 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(({
             </span>
           </div>
       </section>
-
-      {/* Top 5 Setup Performance & Session Win Rate */}
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
-        <article className="rounded-2xl glass-card p-5 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between gap-4 pb-3 border-b border-white/[0.08]">
-                  <div>
-                    <p className="text-xs font-medium text-[#8df0c0]">Setup edge</p>
-                    <h3 className="text-base font-bold text-[#eef3fb]">Top 5 Setup Performance</h3>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onNavigate('analytics')}
-                    className="min-h-[36px] inline-flex items-center gap-1 text-xs font-semibold text-[#8df0c0] hover:text-[#b4f7d8] transition whitespace-nowrap"
-                  >
-                    <span>Analytics</span>
-                    <ArrowUpRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                {topSetups.length === 0 ? (
-                  <div className="py-8 text-center space-y-2.5">
-                    <p className="text-sm font-medium text-[#9aa8be]">
-                      No executed setup data yet.
-                    </p>
-                    <p className="text-xs text-[#6e7e98]">
-                      Log trades with your setup type to rank your top-performing strategies.
-                    </p>
-                    <div className="pt-1">
-                      <button
-                        type="button"
-                        onClick={onOpenLogTrade}
-                        className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-[#47dca0] px-3.5 py-1.5 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] transition"
-                      >
-                        <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                        <span>Log trade</span>
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-4 space-y-3.5">
-                    {topSetups.map((item, idx) => {
-                      const pct = Math.min(100, (Math.abs(item.netR) / maxTopSetupAbs) * 100);
-                      const negative = item.netR < 0;
-                      return (
-                        <div key={item.label} className="space-y-1.5">
-                          <div className="flex items-center justify-between gap-3 text-xs">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="font-mono text-[11px] font-bold tabular-nums text-[#7989a1]">
-                                #{idx + 1}
-                              </span>
-                              <span className="font-bold text-[#eef3fb] truncate">{item.label}</span>
-                              <span className="text-[#7f8fa8] font-mono tabular-nums whitespace-nowrap">
-                                {item.wins}W · {item.losses}L · {Math.round(item.winRate)}% WR
-                              </span>
-                            </div>
-                            <span
-                              className={`font-mono font-bold tabular-nums shrink-0 ${
-                                negative ? 'text-[#ff7d91]' : 'text-[#47dca0]'
-                              }`}
-                            >
-                              {formatMetric(item.netR, activeUnit, activeCurrency)}
-                            </span>
-                          </div>
-                          <div className="h-2 rounded-full bg-white/[0.06] overflow-hidden">
-                            <div
-                              className={`h-full rounded-full transition-all duration-300 ${
-                                negative ? 'bg-[#ff7d91]' : 'bg-[#47dca0]'
-                              }`}
-                              style={{ width: `${Math.max(5, pct)}%` }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </article>
-
-        <article className="rounded-2xl glass-card p-5 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between gap-4 pb-3 border-b border-white/[0.08]">
-                  <div>
-                    <p className="text-xs font-medium text-[#8df0c0]">Timing accuracy</p>
-                    <h3 className="text-base font-bold text-[#eef3fb]">Session Win Rate</h3>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onNavigate('analytics')}
-                    className="min-h-[36px] inline-flex items-center gap-1 text-xs font-semibold text-[#8df0c0] hover:text-[#b4f7d8] transition whitespace-nowrap"
-                  >
-                    <span>Analytics</span>
-                    <ArrowUpRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                {sessionWinRates.length === 0 ? (
-                  <div className="py-8 text-center space-y-2.5">
-                    <p className="text-sm font-medium text-[#9aa8be]">
-                      No session statistics yet.
-                    </p>
-                    <p className="text-xs text-[#6e7e98]">
-                      Track trades across London, New York, Asia, or Overlap to measure session win rates.
-                    </p>
-                    <div className="pt-1">
-                      <button
-                        type="button"
-                        onClick={onOpenLogTrade}
-                        className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-[#47dca0] px-3.5 py-1.5 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] transition"
-                      >
-                        <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                        <span>Log trade</span>
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-4 space-y-3.5">
-                    {sessionWinRates.map((item, idx) => {
-                      const wr = Math.round(item.winRate);
-                      const isStrong = wr >= 50;
-                      return (
-                        <div key={item.label} className="space-y-1.5">
-                          <div className="flex items-center justify-between gap-3 text-xs">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="font-bold text-[#eef3fb] truncate">
-                                {item.label}
-                              </span>
-                              {idx === 0 && sessionWinRates.length > 1 && (
-                                <span className="text-[11px] font-semibold text-[#8df0c0] whitespace-nowrap">
-                                  · Highest WR
-                                </span>
-                              )}
-                              <span className="text-[#7f8fa8] font-mono tabular-nums whitespace-nowrap">
-                                {item.wins}W · {item.losses}L ({item.count})
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2.5 shrink-0 font-mono tabular-nums">
-                              <span
-                                className={`text-[11px] font-semibold ${
-                                  item.netR < 0 ? 'text-[#ff7d91]' : 'text-[#8ebeff]'
-                                }`}
-                              >
-                                {formatMetric(item.netR, activeUnit, activeCurrency)}
-                              </span>
-                              <span
-                                className={`font-bold ${
-                                  isStrong ? 'text-[#47dca0]' : 'text-[#eef3fb]'
-                                }`}
-                              >
-                                {wr}%
-                              </span>
-                            </div>
-                          </div>
-                          <div className="h-2 rounded-full bg-white/[0.06] overflow-hidden">
-                            <div
-                              className={`h-full rounded-full transition-all duration-300 ${
-                                isStrong ? 'bg-[#47dca0]' : 'bg-[#8ebeff]'
-                              }`}
-                              style={{ width: `${Math.max(4, Math.min(100, item.winRate))}%` }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </article>
-      </section>
-
 
       {/* Recent Executions + Daily Motivational Quote */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5">
