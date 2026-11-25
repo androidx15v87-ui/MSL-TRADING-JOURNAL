@@ -10,6 +10,8 @@ import React, {
 import { AnimatePresence, motion } from 'motion/react';
 import { AppLockScreen } from './components/AppLockScreen';
 import { ConfirmModal } from './components/ConfirmModal';
+import { EntrySplash } from './components/EntrySplash';
+import { JournalModal } from './components/JournalModal';
 import { Layout } from './components/Layout';
 import { OfflineBanner } from './components/OfflineBanner';
 import { TradeDetailModal } from './components/TradeDetailModal';
@@ -25,6 +27,7 @@ import {
 } from './lib/appLock';
 import { createDefaultState, QUOTES, type QuoteItem } from './data/quotes';
 import {
+  calculateJournalSummary,
   formatTradePnL,
   formatTradeRisk,
   generateId,
@@ -49,10 +52,12 @@ import {
   cloudSaveAIMemory,
   cloudSaveAlarmsAndSettings,
   cloudSaveField,
+  cloudSaveJournal,
   cloudSaveModel,
   cloudSavePlaybook,
   cloudSaveProfile,
   cloudSaveTrade,
+  cloudSoftDeleteJournal,
   ensureCloudWorkspace,
   mergeMissingLocalTradesToCloud,
   subscribeToCloudJournal,
@@ -62,9 +67,13 @@ import {
   buildBackupPayload,
   clearAllJournalData,
   deleteTradeRecord,
+  loadActiveJournalId,
   loadJournalState,
   loadPlaybookChecks,
+  resolveActiveJournalId,
+  saveActiveJournalId,
   saveFullJournalState,
+  saveJournalRecord,
   saveKV,
   savePlaybookChecks,
   saveTradeRecord,
@@ -83,6 +92,7 @@ import type {
   AIMemoryItem,
   CustomField,
   Direction,
+  GlassTheme,
   JournalSettings,
   JournalState,
   ModelType,
@@ -93,11 +103,15 @@ import type {
   SetupType,
   Trade,
   TradeOutcome,
+  TradingJournal,
   TradingModel,
   UserProfile,
 } from './types/journal';
 
 // Lazy-load secondary screens for faster first paint & lighter memory footprint
+const JournalsScreen = lazy(() =>
+  import('./screens/JournalsScreen').then((m) => ({ default: m.JournalsScreen }))
+);
 const JournalScreen = lazy(() =>
   import('./screens/JournalScreen').then((m) => ({ default: m.JournalScreen }))
 );
@@ -123,6 +137,7 @@ const SettingsScreen = lazy(() =>
 const LAST_SYNCED_UID_KEY = 'msl_v10_last_uid';
 const VALID_PAGES = new Set<PageId>([
   'dashboard',
+  'journals',
   'journal',
   'calendar',
   'models',
@@ -206,10 +221,56 @@ export default function App() {
   const [modalInitialDate, setModalInitialDate] = useState<string | undefined>(undefined);
   const [viewingTrade, setViewingTrade] = useState<Trade | null>(null);
   const [tradeToDelete, setTradeToDelete] = useState<Trade | null>(null);
+  const [journalModalOpen, setJournalModalOpen] = useState(false);
+  const [editingJournal, setEditingJournal] = useState<TradingJournal | null>(null);
+  const [journalToDelete, setJournalToDelete] = useState<TradingJournal | null>(null);
+
+  const activeJournals = useMemo(
+    () => (state.journals || []).filter((j) => !j.isDeleted),
+    [state.journals]
+  );
+
+  const activeJournal = useMemo(
+    () =>
+      activeJournals.find((j) => j.id === state.activeJournalId) ||
+      activeJournals[0] ||
+      null,
+    [activeJournals, state.activeJournalId]
+  );
+
+  const journalSummaries = useMemo(
+    () =>
+      activeJournals.map((j) =>
+        calculateJournalSummary(j, state.trades, state.settings)
+      ),
+    [activeJournals, state.trades, state.settings]
+  );
+
+  const journalSummaryMap = useMemo(
+    () => new Map(journalSummaries.map((s) => [s.journal.id, s])),
+    [journalSummaries]
+  );
+
+  const scopedTrades = useMemo(
+    () =>
+      activeJournal
+        ? state.trades.filter((t) => t.journalId === activeJournal.id)
+        : [],
+    [state.trades, activeJournal]
+  );
+
+  const scopedAIState = useMemo(
+    () => ({
+      ...state,
+      activeJournalId: activeJournal?.id ?? null,
+      trades: scopedTrades,
+    }),
+    [state, activeJournal?.id, scopedTrades]
+  );
 
   const existingTags = useMemo(
-    () => getAllTradeTags(state.trades).map((t) => t.tag),
-    [state.trades]
+    () => getAllTradeTags(scopedTrades).map((t) => t.tag),
+    [scopedTrades]
   );
 
   const {
@@ -264,14 +325,36 @@ export default function App() {
     saveLockAccountName(accountDisplayName);
   }, [accountDisplayName, hydrated]);
 
+  useEffect(() => {
+    if (!hydrated) return;
+    const theme: GlassTheme =
+      state.settings.glassTheme === 'frost-blue' || state.settings.glassTheme === 'obsidian-gold'
+        ? state.settings.glassTheme
+        : 'midnight-glass';
+    document.documentElement.dataset.glassTheme = theme;
+    try {
+      localStorage.setItem('msl_v10_glass_theme', theme);
+    } catch {
+      // Ignore storage failures
+    }
+  }, [hydrated, state.settings.glassTheme]);
+
   // Hydrate full journal state from IndexedDB on boot
   useEffect(() => {
     let active = true;
     loadJournalState()
       .then((loaded) => {
         if (!active) return;
-        setState(loaded);
-        syncNativeAlarms(loaded.alarms);
+        const resolvedId = resolveActiveJournalId(
+          loaded.journals || [],
+          loaded.activeJournalId
+        );
+        const nextLoaded: JournalState = {
+          ...loaded,
+          activeJournalId: resolvedId,
+        };
+        setState(nextLoaded);
+        syncNativeAlarms(nextLoaded.alarms);
         setHydrated(true);
       })
       .catch(() => {
@@ -295,6 +378,7 @@ export default function App() {
     // Warm up /api/health + upstream Gemini TLS connection & lazy screen chunks during splash
     void fetch('/api/health?warm=1', { keepalive: true }).catch(() => {});
     const timer = window.setTimeout(() => {
+      void import('./screens/JournalsScreen');
       void import('./screens/JournalScreen');
       void import('./screens/CalendarScreen');
       void import('./screens/ModelsScreen');
@@ -313,9 +397,18 @@ export default function App() {
       mergedForSessionRef.current = null;
       setCloudStatus('local');
       setCloudError(null);
-      void loadPlaybookChecks(null).then((localChecks) => {
-        setState((prev) => ({ ...prev, playbookChecks: localChecks }));
-      });
+      void Promise.all([loadPlaybookChecks(null), loadActiveJournalId(null)]).then(
+        ([localChecks, localActiveJournalId]) => {
+          setState((prev) => ({
+            ...prev,
+            playbookChecks: localChecks,
+            activeJournalId: resolveActiveJournalId(
+              prev.journals || [],
+              localActiveJournalId || prev.activeJournalId
+            ),
+          }));
+        }
+      );
       return;
     }
 
@@ -363,12 +456,17 @@ export default function App() {
               } catch {
                 lastUid = null;
               }
-              if (lastUid !== user.uid && preSyncSnapshot.trades.length > 0) {
+              if (
+                lastUid !== user.uid &&
+                (preSyncSnapshot.trades.length > 0 ||
+                  (preSyncSnapshot.journals || []).length > 0)
+              ) {
                 try {
                   const mergedCount = await mergeMissingLocalTradesToCloud(
                     user.uid,
                     preSyncSnapshot,
-                    cloudState.trades
+                    cloudState.trades,
+                    cloudState.journals
                   );
                   if (mergedCount > 0 && !cancelled) {
                     showToast(`Merged ${mergedCount} local trade(s) into your cloud journal.`);
@@ -386,10 +484,18 @@ export default function App() {
               }
             }
 
-            const scopedChecks = await loadPlaybookChecks(user.uid);
+            const [scopedChecks, storedActiveJournalId] = await Promise.all([
+              loadPlaybookChecks(user.uid),
+              loadActiveJournalId(user.uid),
+            ]);
             if (cancelled) return;
+            const resolvedActiveId = resolveActiveJournalId(
+              cloudState.journals || [],
+              stateRef.current.activeJournalId || storedActiveJournalId
+            );
             const mergedState: JournalState = {
               ...cloudState,
+              activeJournalId: resolvedActiveId,
               playbookChecks: scopedChecks,
             };
             setState(mergedState);
@@ -445,7 +551,7 @@ export default function App() {
     };
   }, [hydrated, authReady, user, setCloudStatus, setCloudError, showToast]);
 
-  // Two-part 6.0-second Obsidian Vault opening animation (0-3.0s Emblem -> 3.0-6.0s Market Curve & Conviction, no version label)
+  // Two-act 6-second Liquid-Glass Entry Choreography (0-3.0s Monogram Seal -> 3.0-6.0s Trajectory & Conviction)
   useEffect(() => {
     const t2 = window.setTimeout(() => {
       setSplashPhase(2);
@@ -568,12 +674,142 @@ export default function App() {
     };
   }, [hydrated, state.alarms, state.settings, showToast, tradeModalOpen]);
 
-  const handleOpenNewTrade = useCallback((dateIso?: string) => {
-    setEditingTrade(null);
-    setDraftTemplate(null);
-    setModalInitialDate(dateIso);
-    setTradeModalOpen(true);
+  const handleSelectJournal = useCallback((journalId: string) => {
+    const exists = (stateRef.current.journals || []).some(
+      (j) => !j.isDeleted && j.id === journalId
+    );
+    if (!exists) return;
+    stateRef.current = { ...stateRef.current, activeJournalId: journalId };
+    setState((prev) => ({ ...prev, activeJournalId: journalId }));
+    void saveActiveJournalId(journalId, userRef.current?.uid);
   }, []);
+
+  const handleOpenCreateJournal = useCallback(() => {
+    setEditingJournal(null);
+    setJournalModalOpen(true);
+  }, []);
+
+  const handleOpenEditJournal = useCallback((journal: TradingJournal) => {
+    setEditingJournal(journal);
+    setJournalModalOpen(true);
+  }, []);
+
+  const handleSaveJournal = async (journal: TradingJournal) => {
+    const isNew = !(stateRef.current.journals || []).some((j) => j.id === journal.id);
+    await saveJournalRecord(journal);
+
+    const existingIdx = (stateRef.current.journals || []).findIndex(
+      (j) => j.id === journal.id
+    );
+    const nextJournals =
+      existingIdx >= 0
+        ? stateRef.current.journals.map((j) => (j.id === journal.id ? journal : j))
+        : [...(stateRef.current.journals || []), journal];
+    const nextActiveId = isNew
+      ? journal.id
+      : resolveActiveJournalId(
+          nextJournals,
+          stateRef.current.activeJournalId || journal.id
+        );
+
+    setState((prev) => {
+      const idx = (prev.journals || []).findIndex((j) => j.id === journal.id);
+      const updated =
+        idx >= 0
+          ? prev.journals.map((j) => (j.id === journal.id ? journal : j))
+          : [...(prev.journals || []), journal];
+      return {
+        ...prev,
+        journals: updated,
+        activeJournalId: nextActiveId,
+      };
+    });
+
+    if (isNew && nextActiveId) {
+      await saveActiveJournalId(nextActiveId, user?.uid);
+    }
+
+    setJournalModalOpen(false);
+    setEditingJournal(null);
+
+    if (user) {
+      try {
+        await cloudSaveJournal(user.uid, journal);
+        showToast(
+          isNew
+            ? `Journal "${journal.name}" created & synced.`
+            : `Journal "${journal.name}" updated & synced.`
+        );
+      } catch (err) {
+        showToast(formatCloudErrorMessage(err));
+      }
+    } else {
+      showToast(
+        isNew
+          ? `Journal "${journal.name}" created.`
+          : `Journal "${journal.name}" updated.`
+      );
+    }
+  };
+
+  const handleConfirmDeleteJournal = async () => {
+    if (!journalToDelete) return;
+    const nowIso = new Date().toISOString();
+    const softDeleted: TradingJournal = {
+      ...journalToDelete,
+      isDeleted: true,
+      deletedAt: nowIso,
+      updatedAt: nowIso,
+    };
+    await saveJournalRecord(softDeleted);
+
+    const nextJournals = (stateRef.current.journals || []).map((j) =>
+      j.id === softDeleted.id ? softDeleted : j
+    );
+    const nextActiveId =
+      stateRef.current.activeJournalId === softDeleted.id
+        ? resolveActiveJournalId(nextJournals, null)
+        : resolveActiveJournalId(nextJournals, stateRef.current.activeJournalId);
+
+    await saveActiveJournalId(nextActiveId, user?.uid);
+    setState((prev) => ({
+      ...prev,
+      journals: prev.journals.map((j) => (j.id === softDeleted.id ? softDeleted : j)),
+      activeJournalId: nextActiveId,
+    }));
+    setJournalToDelete(null);
+
+    if (user) {
+      try {
+        await cloudSoftDeleteJournal(user.uid, softDeleted);
+        showToast(`Journal "${softDeleted.name}" deleted.`);
+      } catch (err) {
+        showToast(formatCloudErrorMessage(err));
+      }
+    } else {
+      showToast(`Journal "${softDeleted.name}" deleted.`);
+    }
+  };
+
+  const handleOpenNewTrade = useCallback(
+    (dateIso?: string) => {
+      const currentActiveId = resolveActiveJournalId(
+        stateRef.current.journals || [],
+        stateRef.current.activeJournalId
+      );
+      if (!currentActiveId) {
+        setEditingJournal(null);
+        setJournalModalOpen(true);
+        showToast('Create a journal first to start logging trades.');
+        return;
+      }
+      setEditingTrade(null);
+      setDraftTemplate(null);
+      setModalInitialDate(dateIso);
+      setTradeModalOpen(true);
+    },
+    [showToast]
+  );
 
   const handleEditTrade = (trade: Trade) => {
     setViewingTrade(null);
@@ -592,10 +828,18 @@ export default function App() {
   };
 
   const handleSaveTrade = async (trade: Trade) => {
-    await saveTradeRecord(trade);
+    const resolvedId =
+      trade.journalId ||
+      resolveActiveJournalId(
+        stateRef.current.journals || [],
+        stateRef.current.activeJournalId
+      );
+    const tradeToSave: Trade = resolvedId ? { ...trade, journalId: resolvedId } : trade;
+
+    await saveTradeRecord(tradeToSave);
     setState((prev) => ({
       ...prev,
-      trades: [trade, ...prev.trades.filter((x) => x.id !== trade.id)],
+      trades: [tradeToSave, ...prev.trades.filter((x) => x.id !== tradeToSave.id)],
     }));
     setTradeModalOpen(false);
     setEditingTrade(null);
@@ -603,7 +847,7 @@ export default function App() {
 
     if (user) {
       try {
-        await cloudSaveTrade(user.uid, trade);
+        await cloudSaveTrade(user.uid, tradeToSave);
         showToast('Trade saved & synced to cloud.');
       } catch (err) {
         showToast(formatCloudErrorMessage(err));
@@ -800,6 +1044,25 @@ export default function App() {
               ok: true,
             });
           } else if (action.name === 'log_trade') {
+            const curJournals = stateRef.current.journals || [];
+            const curActiveId = resolveActiveJournalId(
+              curJournals,
+              stateRef.current.activeJournalId
+            );
+            const curActiveJournal =
+              curJournals.find((j) => !j.isDeleted && j.id === curActiveId) || null;
+            if (!curActiveJournal) {
+              results.push({
+                name: action.name,
+                label: 'Create a journal first before logging trades',
+                ok: false,
+              });
+              setEditingJournal(null);
+              setJournalModalOpen(true);
+              showToast('Create a journal first to log trades.');
+              continue;
+            }
+
             const nowIso = new Date().toISOString();
             const curSettings = stateRef.current.settings;
             const pnlUnit = normalizeMetricUnit(
@@ -813,9 +1076,10 @@ export default function App() {
             const currency =
               typeof action.args.currency === 'string' && action.args.currency.trim()
                 ? action.args.currency.trim().slice(0, 8)
-                : curSettings.currency || '$';
+                : curActiveJournal.currency || curSettings.currency || 'R';
             const newTrade: Trade = {
               id: generateId(),
+              journalId: curActiveJournal.id,
               date:
                 typeof action.args.date === 'string' && action.args.date.trim()
                   ? action.args.date.trim().slice(0, 16)
@@ -1358,188 +1622,13 @@ export default function App() {
 
   return (
     <>
-      {/* Two-Part 6-Second Liquid-Glass Entry Animation (Zero App Version Shown) */}
+      {/* Minimal 6-Second Entry Animation */}
       <AnimatePresence>
         {showSplash && (
-          <motion.div
-            initial={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 1.02 }}
-            transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-[#060a14] backdrop-blur-2xl px-6 select-none overflow-hidden"
-          >
-            {/* Ambient Dual-Tone Breathing Aurora */}
-            <motion.div
-              initial={{ opacity: 0.2, scale: 0.85 }}
-              animate={{ opacity: [0.22, 0.55, 0.35], scale: [0.85, 1.12, 1.02] }}
-              transition={{ duration: 6, ease: 'easeInOut' }}
-              className="pointer-events-none absolute h-[420px] w-[420px] rounded-full bg-[radial-gradient(circle,rgba(71,220,160,0.22)_0%,rgba(142,190,255,0.1)_48%,transparent_74%)] blur-3xl"
-            />
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute h-[310px] w-[310px] rounded-full border border-[#47dca0]/[0.1] splash-orbit"
-            />
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute h-[380px] w-[380px] rounded-full border border-dashed border-[#8ebeff]/[0.08] splash-orbit-reverse"
-            />
-
-            <motion.div
-              initial={{ opacity: 0, scale: 0.92, y: 18 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              transition={{ duration: 0.65, ease: [0.16, 1, 0.3, 1] }}
-              className="relative liquid-glass rounded-3xl px-8 py-10 w-full max-w-[348px] text-center overflow-hidden"
-            >
-              {/* Soft Specular Sheen Sweep */}
-              <div className="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-transparent via-white/[0.1] to-transparent splash-sheen" />
-
-              <AnimatePresence mode="wait">
-                {splashPhase === 1 ? (
-                  <motion.div
-                    key="splash-part-1"
-                    initial={{ opacity: 0, y: 12, scale: 0.94 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -14, scale: 0.95 }}
-                    transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-                    className="flex flex-col items-center gap-4"
-                  >
-                    <div className="relative flex items-center justify-center">
-                      <div className="absolute -inset-3 rounded-[26px] border border-[#47dca0]/30 splash-beacon" />
-                      <motion.div
-                        initial={{ rotate: -28, scale: 0.8, opacity: 0 }}
-                        animate={{ rotate: 0, scale: 1, opacity: 1 }}
-                        transition={{ duration: 0.85, ease: [0.16, 1, 0.3, 1] }}
-                        className="absolute -inset-1.5 rounded-[22px] border border-[#8ebeff]/30"
-                      />
-                      <motion.div
-                        initial={{ scale: 0.84, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        transition={{ duration: 0.55, delay: 0.08, ease: [0.16, 1, 0.3, 1] }}
-                        className="relative h-16 w-16 rounded-2xl border border-white/25 bg-gradient-to-br from-[#235458]/95 to-[#0a1829]/95 flex items-center justify-center font-display text-xl font-extrabold tracking-tight text-[#8df0c0] shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_12px_28px_-10px_rgba(71,220,160,0.45)]"
-                      >
-                        MSL
-                      </motion.div>
-                    </div>
-
-                    <div className="w-full space-y-2">
-                      <motion.p
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.45, delay: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                        className="font-display text-2xl font-extrabold tracking-tight text-[#eef3fb]"
-                      >
-                        MSL Journal
-                      </motion.p>
-                      <motion.div
-                        initial={{ scaleX: 0, opacity: 0 }}
-                        animate={{ scaleX: 1, opacity: 1 }}
-                        transition={{ duration: 0.65, delay: 0.34, ease: [0.16, 1, 0.3, 1] }}
-                        className="mx-auto h-px w-28 bg-gradient-to-r from-transparent via-[#47dca0]/80 to-transparent origin-center"
-                      />
-                      <motion.p
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ duration: 0.45, delay: 0.48 }}
-                        className="text-xs font-medium text-[#9fb0c7]"
-                      >
-                        Precision trade workspace
-                      </motion.p>
-                    </div>
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key="splash-part-2"
-                    initial={{ opacity: 0, y: 14, scale: 0.96 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, scale: 1.03 }}
-                    transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-                    className="py-1 flex flex-col items-center gap-4"
-                  >
-                    <svg
-                      viewBox="0 0 210 52"
-                      className="w-48 h-12 overflow-visible"
-                      aria-hidden="true"
-                    >
-                      <defs>
-                        <linearGradient id="splashCurveGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                          <stop offset="0%" stopColor="#8ebeff" stopOpacity="0.45" />
-                          <stop offset="55%" stopColor="#47dca0" stopOpacity="0.95" />
-                          <stop offset="100%" stopColor="#8df0c0" stopOpacity="1" />
-                        </linearGradient>
-                        <linearGradient id="splashAreaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                          <stop offset="0%" stopColor="#47dca0" stopOpacity="0.26" />
-                          <stop offset="100%" stopColor="#47dca0" stopOpacity="0" />
-                        </linearGradient>
-                      </defs>
-
-                      <line x1="0" y1="38" x2="210" y2="38" stroke="rgba(255,255,255,0.08)" strokeDasharray="3 4" strokeWidth="1" />
-                      <line x1="0" y1="20" x2="210" y2="20" stroke="rgba(142,190,255,0.12)" strokeDasharray="3 4" strokeWidth="1" />
-
-                      <motion.path
-                        d="M 6 42 Q 36 44, 54 32 T 106 28 T 156 16 T 204 6 L 204 48 L 6 48 Z"
-                        fill="url(#splashAreaGrad)"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ duration: 0.9, delay: 0.2 }}
-                      />
-                      <motion.path
-                        d="M 6 42 Q 36 44, 54 32 T 106 28 T 156 16 T 204 6"
-                        fill="none"
-                        stroke="url(#splashCurveGrad)"
-                        strokeWidth="2.6"
-                        strokeLinecap="round"
-                        initial={{ pathLength: 0, opacity: 0.3 }}
-                        animate={{ pathLength: 1, opacity: 1 }}
-                        transition={{ duration: 1.4, ease: [0.16, 1, 0.3, 1] }}
-                      />
-                      <motion.circle
-                        cx="106"
-                        cy="28"
-                        r="3"
-                        fill="#8ebeff"
-                        initial={{ scale: 0, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 0.9 }}
-                        transition={{ duration: 0.35, delay: 0.65 }}
-                      />
-                      <motion.circle
-                        cx="204"
-                        cy="6"
-                        r="4"
-                        fill="#8df0c0"
-                        initial={{ scale: 0, opacity: 0 }}
-                        animate={{ scale: [0, 1.45, 1], opacity: 1 }}
-                        transition={{ duration: 0.45, delay: 1.2, ease: [0.16, 1, 0.3, 1] }}
-                      />
-                    </svg>
-
-                    <div className="space-y-1.5">
-                      <motion.p
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.4, delay: 0.14, ease: [0.16, 1, 0.3, 1] }}
-                        className="font-display text-lg font-extrabold tracking-tight text-[#eef3fb]"
-                      >
-                        Read the market.{' '}
-                        <span className="text-[#47dca0]">Respect the plan.</span>
-                      </motion.p>
-                      <motion.p
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ duration: 0.4, delay: 0.38 }}
-                        className="text-xs text-[#9fb0c7]"
-                      >
-                        Structure · Patience · Edge
-                      </motion.p>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* Continuous 6.0s compositor hairline load progress */}
-              <div className="mt-7 h-0.5 w-full rounded-full bg-white/[0.08] overflow-hidden">
-                <div className="h-full w-full rounded-full bg-gradient-to-r from-[#8ebeff] via-[#47dca0] to-[#8df0c0] splash-progress-fill" />
-              </div>
-            </motion.div>
-          </motion.div>
+          <EntrySplash
+            phase={splashPhase}
+            durationMs={6000}
+          />
         )}
       </AnimatePresence>
 
@@ -1570,6 +1659,11 @@ export default function App() {
           onSignIn={handleSignIn}
           onSignOut={handleSignOut}
           displayName={state.profile.name}
+          journals={activeJournals}
+          activeJournal={activeJournal}
+          journalSummaries={journalSummaryMap}
+          onSelectJournal={handleSelectJournal}
+          onCreateJournal={handleOpenCreateJournal}
         >
           {!hydrated ? (
             <div className="space-y-5 animate-pulse">
@@ -1586,7 +1680,7 @@ export default function App() {
               {aiMounted && (
                 <div className={activePage === 'ai' ? 'block' : 'hidden'}>
                   <AIScreen
-                    journalState={state}
+                    journalState={scopedAIState}
                     memories={memories}
                     isActive={activePage === 'ai'}
                     onBack={() => setActivePage(previousPageRef.current || 'dashboard')}
@@ -1606,22 +1700,48 @@ export default function App() {
                 >
                   {activePage === 'dashboard' && (
                     <OverviewScreen
-                      trades={state.trades}
+                      journals={activeJournals}
+                      activeJournal={activeJournal}
+                      journalSummaries={journalSummaries}
+                      trades={scopedTrades}
                       alarms={state.alarms}
                       settings={state.settings}
                       quote={quote}
                       onNextQuote={handleCycleQuote}
                       onCopyQuote={handleCopyQuote}
                       onOpenLogTrade={() => handleOpenNewTrade()}
+                      onSelectJournal={handleSelectJournal}
+                      onCreateJournal={handleOpenCreateJournal}
+                      onEditJournal={handleOpenEditJournal}
+                      onDeleteJournal={(j) => setJournalToDelete(j)}
                       onNavigate={handleNavigate}
                       onSelectTrade={(t) => setViewingTrade(t)}
+                      entranceReady={!showSplash && !isLocked}
+                    />
+                  )}
+
+                  {activePage === 'journals' && (
+                    <JournalsScreen
+                      journals={activeJournals}
+                      activeJournal={activeJournal}
+                      journalSummaries={journalSummaries}
+                      onSelectJournal={handleSelectJournal}
+                      onCreateJournal={handleOpenCreateJournal}
+                      onEditJournal={handleOpenEditJournal}
+                      onDeleteJournal={(j) => setJournalToDelete(j)}
+                      onLogTradeInJournal={(journalId) => {
+                        handleSelectJournal(journalId);
+                        handleOpenNewTrade();
+                      }}
+                      entranceReady={!showSplash && !isLocked}
                     />
                   )}
 
                   {activePage === 'journal' && (
                     <JournalScreen
-                      trades={state.trades}
+                      trades={scopedTrades}
                       settings={state.settings}
+                      activeJournalName={activeJournal?.name}
                       onOpenNewTrade={() => handleOpenNewTrade()}
                       onSelectTrade={(t) => setViewingTrade(t)}
                       onExportBackup={handleDownloadBackup}
@@ -1631,8 +1751,9 @@ export default function App() {
 
                   {activePage === 'calendar' && (
                     <CalendarScreen
-                      trades={state.trades}
+                      trades={scopedTrades}
                       settings={state.settings}
+                      activeJournalName={activeJournal?.name}
                       onLogTradeForDate={(dateIso) => handleOpenNewTrade(dateIso)}
                       onSelectTrade={(t) => setViewingTrade(t)}
                     />
@@ -1651,8 +1772,9 @@ export default function App() {
 
                   {activePage === 'analytics' && (
                     <AnalyticsScreen
-                      trades={state.trades}
+                      trades={scopedTrades}
                       settings={state.settings}
+                      activeJournalName={activeJournal?.name}
                       onSelectTrade={(t) => setViewingTrade(t)}
                     />
                   )}
@@ -1694,6 +1816,18 @@ export default function App() {
         </Layout>
       </motion.div>
 
+      {/* Create / Edit Journal Modal */}
+      <JournalModal
+        open={journalModalOpen}
+        journal={editingJournal}
+        defaultCurrency={state.settings.currency}
+        onClose={() => {
+          setJournalModalOpen(false);
+          setEditingJournal(null);
+        }}
+        onSave={handleSaveJournal}
+      />
+
       {/* Log / Edit Trade Modal */}
       <TradeModal
         open={tradeModalOpen}
@@ -1701,6 +1835,7 @@ export default function App() {
         draftTemplate={draftTemplate}
         initialDate={modalInitialDate}
         defaultMarket={state.profile.market}
+        activeJournal={activeJournal}
         settings={state.settings}
         models={state.models}
         fields={state.fields}
@@ -1740,6 +1875,21 @@ export default function App() {
         confirmLabel="Delete trade"
         onConfirm={handleConfirmDeleteTrade}
         onCancel={() => setTradeToDelete(null)}
+      />
+
+      {/* Soft-Delete Journal Confirmation Modal */}
+      <ConfirmModal
+        open={Boolean(journalToDelete)}
+        danger
+        title="Delete trading journal?"
+        description={
+          journalToDelete
+            ? `Remove "${journalToDelete.name}" from your active journals and switchers? Its trades will stay archived safely unless you clear all data.`
+            : ''
+        }
+        confirmLabel="Delete journal"
+        onConfirm={handleConfirmDeleteJournal}
+        onCancel={() => setJournalToDelete(null)}
       />
 
       {/* Offline Status Notice */}

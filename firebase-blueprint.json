@@ -69,7 +69,12 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 8,
-          "description": "Preferred currency symbol for money-unit logging."
+          "description": "Preferred currency symbol for logging (Default 'R' for Risk/Reward, or monetary symbol like '$')."
+        },
+        "glassTheme": {
+          "type": "string",
+          "enum": ["midnight-glass", "frost-blue", "obsidian-gold"],
+          "description": "Selected glassmorphism appearance theme across workspace surfaces."
         },
         "createdAt": {
           "type": "string",
@@ -109,6 +114,12 @@
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
         "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "journalId": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128,
@@ -429,12 +440,88 @@
         }
       },
       "required": ["id", "userId", "content", "category", "createdAt", "updatedAt"]
+    },
+    "TradingJournalRecord": {
+      "title": "Trading Journal Account",
+      "description": "An isolated trading journal or prop-firm evaluation container with starting balance, currency, and soft-delete metadata.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "startingBalance": {
+          "type": "number",
+          "description": "Starting balance or challenge size (0 for R-mode journals without a starting balance, or 10..1,000,000,000 for monetary accounts)."
+        },
+        "target": {
+          "type": "number",
+          "description": "Optional profit target amount in journal currency or R (0..1,000,000,000)."
+        },
+        "currency": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8
+        },
+        "propFirm": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "isDeleted": {
+          "type": "boolean"
+        },
+        "deletedAt": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "name",
+        "startingBalance",
+        "currency",
+        "propFirm",
+        "description",
+        "isDeleted",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserWorkspace" },
       "description": "Private root workspace document for each verified trader."
+    },
+    "/users/{userId}/journals/{journalId}": {
+      "schema": { "$ref": "#/entities/TradingJournalRecord" },
+      "description": "Trader's multi-journal accounts and prop-firm evaluations."
     },
     "/users/{userId}/trades/{tradeId}": {
       "schema": { "$ref": "#/entities/TradeRecord" },

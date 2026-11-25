@@ -72,6 +72,7 @@ service cloud.firestore {
           'defaultPnlUnit',
           'defaultRiskUnit',
           'currency',
+          'glassTheme',
           'createdAt',
           'updatedAt'
         ])
@@ -91,6 +92,55 @@ service cloud.firestore {
         && (!('defaultPnlUnit' in data) || (data.defaultPnlUnit is string && data.defaultPnlUnit in ['r', 'percent', 'money', 'value']))
         && (!('defaultRiskUnit' in data) || (data.defaultRiskUnit is string && data.defaultRiskUnit in ['r', 'percent', 'money', 'value']))
         && (!('currency' in data) || isBoundedString(data.currency, 1, 8))
+        && (!('glassTheme' in data) || (data.glassTheme is string && data.glassTheme in ['midnight-glass', 'frost-blue', 'obsidian-gold']))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTradingJournal(data, userId, journalId) {
+      return data.keys().hasAll([
+          'id',
+          'userId',
+          'name',
+          'startingBalance',
+          'currency',
+          'propFirm',
+          'description',
+          'isDeleted',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'userId',
+          'name',
+          'startingBalance',
+          'target',
+          'currency',
+          'propFirm',
+          'description',
+          'isDeleted',
+          'deletedAt',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == journalId
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && data.userId == userId
+        && isBoundedString(data.name, 1, 80)
+        && data.startingBalance is number
+        && (
+          (data.currency == 'R' && data.startingBalance == 0)
+          || (data.startingBalance >= 10 && data.startingBalance <= 1000000000)
+        )
+        && (!('target' in data) || (data.target is number && data.target >= 0 && data.target <= 1000000000))
+        && isBoundedString(data.currency, 1, 8)
+        && isBoundedString(data.propFirm, 0, 80)
+        && isBoundedString(data.description, 0, 400)
+        && data.isDeleted is bool
+        && (!('deletedAt' in data) || isBoundedString(data.deletedAt, 0, 40))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -117,6 +167,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'id',
           'userId',
+          'journalId',
           'date',
           'pair',
           'direction',
@@ -140,6 +191,7 @@ service cloud.firestore {
         && isValidId(data.userId)
         && data.userId == request.auth.uid
         && data.userId == userId
+        && (!('journalId' in data) || isValidId(data.journalId))
         && isBoundedString(data.date, 10, 32)
         && data.date.matches('^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}.*$')
         && isBoundedString(data.pair, 1, 32)
@@ -336,6 +388,7 @@ service cloud.firestore {
             'defaultPnlUnit',
             'defaultRiskUnit',
             'currency',
+            'glassTheme',
             'updatedAt'
           ])
           || incoming().diff(existing()).affectedKeys().hasOnly([
@@ -351,10 +404,52 @@ service cloud.firestore {
             'defaultPnlUnit',
             'defaultRiskUnit',
             'currency',
+            'glassTheme',
             'updatedAt'
           ])
         );
       allow delete: if isOwner(userId) && isValidId(userId) && existing().uid == request.auth.uid;
+
+      match /journals/{journalId} {
+        allow get: if isOwner(userId) && isValidId(journalId) && hasWorkspace(userId) && (resource == null || existing().userId == request.auth.uid);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(journalId)
+          && isValidTradingJournal(incoming(), userId, journalId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasWorkspace(userId);
+        allow update: if isOwner(userId)
+          && isValidId(journalId)
+          && isValidTradingJournal(incoming(), userId, journalId)
+          && hasWorkspace(userId)
+          && existing().userId == request.auth.uid
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name',
+              'startingBalance',
+              'target',
+              'currency',
+              'propFirm',
+              'description',
+              'updatedAt'
+            ])
+            || (
+              existing().isDeleted == false
+              && incoming().isDeleted == true
+              && incoming().diff(existing()).affectedKeys().hasOnly([
+                'isDeleted',
+                'deletedAt',
+                'updatedAt'
+              ])
+            )
+          );
+        allow delete: if isOwner(userId) && isValidId(journalId) && hasWorkspace(userId) && existing().userId == request.auth.uid;
+      }
 
       match /trades/{tradeId} {
         allow get: if isOwner(userId) && isValidId(tradeId) && hasWorkspace(userId) && (resource == null || existing().userId == request.auth.uid);
@@ -375,6 +470,7 @@ service cloud.firestore {
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
           && incoming().diff(existing()).affectedKeys().hasOnly([
+            'journalId',
             'date',
             'pair',
             'direction',

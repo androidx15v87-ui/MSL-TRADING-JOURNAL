@@ -15,6 +15,7 @@ import type {
   Trade,
   TradeOutcome,
   TradeScreenshot,
+  TradingJournal,
   TradingModel,
 } from '../types/journal';
 
@@ -24,6 +25,7 @@ interface TradeModalProps {
   draftTemplate?: Trade | null;
   initialDate?: string;
   defaultMarket?: string;
+  activeJournal?: TradingJournal | null;
   settings?: JournalSettings;
   models: TradingModel[];
   fields: CustomField[];
@@ -64,6 +66,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
   draftTemplate,
   initialDate,
   defaultMarket,
+  activeJournal,
   settings,
   models,
   fields,
@@ -84,7 +87,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
   const [risk, setRisk] = useState('1');
   const [pnlUnit, setPnlUnit] = useState<MetricUnit>('r');
   const [riskUnit, setRiskUnit] = useState<MetricUnit>('r');
-  const [currency, setCurrency] = useState('$');
+  const [currency, setCurrency] = useState('R');
   const [model, setModel] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
@@ -168,7 +171,12 @@ export const TradeModal: React.FC<TradeModalProps> = ({
     }
     const defaultPnlUnit = settings?.defaultPnlUnit || 'r';
     const defaultRiskUnit = settings?.defaultRiskUnit || 'r';
-    const defaultCurrency = settings?.currency || '$';
+    const defaultCurrency = activeJournal?.currency || settings?.currency || 'R';
+    if (activeJournal?.startingBalance && activeJournal.startingBalance > 0) {
+      setAccountBalance(String(activeJournal.startingBalance));
+    } else {
+      setAccountBalance('');
+    }
     const source = trade || draftTemplate;
     if (trade) {
       setDate(trade.date.slice(0, 16));
@@ -229,7 +237,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
       setCustom({});
       setImages([]);
     }
-  }, [open, trade, draftTemplate, initialDate, settings, stopDictation, dismissMicFallback]);
+  }, [open, trade, draftTemplate, initialDate, settings, activeJournal, stopDictation, dismissMicFallback]);
 
   const suggestedTags = useMemo(() => {
     const seen = new Set<string>();
@@ -345,6 +353,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
     try {
       const payload: Trade = {
         id: trade?.id || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
+        journalId: trade?.journalId || activeJournal?.id,
         date: date || localDateTime(),
         pair: cleanedPair,
         direction,
@@ -355,7 +364,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
         risk: Math.max(0, Number(risk || 0)),
         pnlUnit,
         riskUnit,
-        currency: (currency || '$').trim().slice(0, 8) || '$',
+        currency: (currency || 'R').trim().slice(0, 8) || 'R',
         model: model.trim(),
         tags: finalTags,
         notes: notes.trim(),
@@ -697,7 +706,10 @@ export const TradeModal: React.FC<TradeModalProps> = ({
                     [
                       { id: 'r' as MetricUnit, label: 'R' },
                       { id: 'percent' as MetricUnit, label: '%' },
-                      { id: 'money' as MetricUnit, label: currency || '$' },
+                      {
+                        id: 'money' as MetricUnit,
+                        label: currency && currency.toUpperCase() !== 'R' ? currency : '$',
+                      },
                       { id: 'value' as MetricUnit, label: 'Val' },
                     ] as const
                   ).map((u) => (
@@ -750,7 +762,10 @@ export const TradeModal: React.FC<TradeModalProps> = ({
                     [
                       { id: 'r' as MetricUnit, label: 'R' },
                       { id: 'percent' as MetricUnit, label: '%' },
-                      { id: 'money' as MetricUnit, label: currency || '$' },
+                      {
+                        id: 'money' as MetricUnit,
+                        label: currency && currency.toUpperCase() !== 'R' ? currency : '$',
+                      },
                       { id: 'value' as MetricUnit, label: 'Val' },
                     ] as const
                   ).map((u) => (
@@ -783,20 +798,20 @@ export const TradeModal: React.FC<TradeModalProps> = ({
 
             {(pnlUnit === 'money' || riskUnit === 'money') && (
               <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-2 rounded-xl glass-subcard px-3.5 py-2.5">
-                <span className="text-xs font-medium text-[#a9b7cc]">Money currency symbol</span>
+                <span className="text-xs font-medium text-[#a9b7cc]">Currency selection</span>
                 <div className="flex flex-wrap items-center gap-1.5">
-                  {['$', '€', '£', '¥', '₦'].map((sym) => (
+                  {['R', '$', '€', '£', '¥', '₦'].map((sym) => (
                     <button
                       key={sym}
                       type="button"
                       onClick={() => setCurrency(sym)}
                       className={`min-h-[32px] min-w-[34px] rounded-lg border px-2 text-xs font-bold transition ${
-                        currency === sym
+                        currency.toUpperCase() === sym.toUpperCase()
                           ? 'bg-[#47dca0]/18 border-[#47dca0]/55 text-[#8df0c0]'
                           : 'bg-[#080d18]/80 border-white/[0.08] text-[#8b9ab0] hover:text-[#eef3fb]'
                       }`}
                     >
-                      {sym}
+                      {sym === 'R' ? 'Default (R)' : sym}
                     </button>
                   ))}
                   <input
@@ -834,12 +849,15 @@ export const TradeModal: React.FC<TradeModalProps> = ({
               <div className="px-3.5 pb-3.5 pt-2 border-t border-white/[0.07] space-y-3">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                   <label className="block space-y-1">
-                    <span className="text-[11px] text-[#8b9ab0]">Balance ({currency || '$'})</span>
+                    <span className="text-[11px] text-[#8b9ab0]">
+                      Balance ({currency && currency.toUpperCase() !== 'R' ? currency : '$'})
+                    </span>
                     <input
                       type="number"
                       min="0"
                       step="any"
                       value={accountBalance}
+                      placeholder="10000"
                       onChange={(e) => setAccountBalance(e.target.value)}
                       className="w-full min-h-[38px] rounded-lg glass-input px-2.5 py-1.5 text-xs font-mono tabular-nums text-[#eef3fb]"
                     />
@@ -867,7 +885,9 @@ export const TradeModal: React.FC<TradeModalProps> = ({
                     />
                   </label>
                   <label className="block space-y-1">
-                    <span className="text-[11px] text-[#8b9ab0]">{currency || '$'}/unit per pip</span>
+                    <span className="text-[11px] text-[#8b9ab0]">
+                      {currency && currency.toUpperCase() !== 'R' ? currency : '$'}/unit per pip
+                    </span>
                     <input
                       type="number"
                       min="0"
@@ -882,7 +902,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({
                   <span className="tabular-nums">
                     Money risk:{' '}
                     <strong className="font-mono text-[#eef3fb]">
-                      {currency || '$'}
+                      {currency && currency.toUpperCase() !== 'R' ? currency : '$'}
                       {sizerCalculations.dollarRisk.toFixed(2)}
                     </strong>
                   </span>

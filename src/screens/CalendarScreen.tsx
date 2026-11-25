@@ -15,6 +15,7 @@ import type { JournalSettings, Trade } from '../types/journal';
 interface CalendarScreenProps {
   trades: Trade[];
   settings?: JournalSettings;
+  activeJournalName?: string;
   onLogTradeForDate: (dateIso: string) => void;
   onSelectTrade: (trade: Trade) => void;
 }
@@ -24,6 +25,7 @@ const WEEKDAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
   trades,
   settings,
+  activeJournalName,
   onLogTradeForDate,
   onSelectTrade,
 }) => {
@@ -138,14 +140,14 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
     <div className="space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <p className="text-xs font-medium text-[#8df0c0]">
-            Consistency tracker
-          </p>
+          <p className="text-xs font-medium text-[#8df0c0]">Consistency</p>
           <h2 className="mt-0.5 font-display text-2xl font-extrabold text-[#eef3fb]">
             Trading calendar
           </h2>
           <p className="mt-1 text-sm text-[#8b9ab0]">
-            Tap any date to review its executions or missed setups.
+            {activeJournalName
+              ? `Daily P&L and executions in ${activeJournalName}.`
+              : 'Tap any date to inspect its trades or add a new entry.'}
           </p>
         </div>
         <button
@@ -154,19 +156,19 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
           className="min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#47dca0] px-4 py-2 text-sm font-bold text-[#051612] hover:bg-[#62e4b0] transition whitespace-nowrap shrink-0"
         >
           <Plus className="w-4 h-4 stroke-[2.5]" />
-          <span>Add trade</span>
+          <span>Log trade</span>
         </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* Calendar Grid Card */}
+        {/* Calendar Grid */}
         <article className="lg:col-span-7 xl:col-span-8 rounded-2xl glass-card p-4 sm:p-5">
           <div className="flex items-center justify-between gap-3 pb-4">
             <button
               type="button"
               onClick={() => shiftMonth(-1)}
               aria-label="Previous month"
-              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl glass-subcard text-[#eef3fb] hover:border-[#47dca0]/40 transition"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl glass-subcard text-[#eef3fb] hover:border-[#47dca0]/45 transition"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -188,25 +190,23 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
               type="button"
               onClick={() => shiftMonth(1)}
               aria-label="Next month"
-              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl glass-subcard text-[#eef3fb] hover:border-[#47dca0]/40 transition"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl glass-subcard text-[#eef3fb] hover:border-[#47dca0]/45 transition"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Weekday Headers */}
           <div className="grid grid-cols-7 gap-1.5 text-center pb-2">
             {WEEKDAYS.map((wd) => (
               <span
                 key={wd}
-                className="text-[10px] font-semibold tracking-wider text-[#6c7d96]"
+                className="text-[10px] font-semibold tracking-wider text-[#7f8fa8]"
               >
                 {wd}
               </span>
             ))}
           </div>
 
-          {/* 42 Day Cells */}
           <div className="grid grid-cols-7 gap-1.5">
             {calendarCells.map((cell) => {
               const isSelected = cell.key === selectedDate;
@@ -217,15 +217,15 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
 
               let bgStyle = 'bg-white/[0.03] border-white/[0.07] text-[#c7d3e5]';
               if (!cell.inMonth) {
-                bgStyle = 'bg-black/20 border-white/[0.03] text-[#4c5b73]';
+                bgStyle = 'bg-black/25 border-white/[0.03] text-[#4c5b73]';
               } else if (isPositive) {
-                bgStyle = 'bg-[#47dca0]/12 border-[#47dca0]/40 text-[#eef3fb]';
+                bgStyle = 'bg-[#47dca0]/15 border-[#47dca0]/45 text-[#eef3fb]';
               } else if (isNegative) {
-                bgStyle = 'bg-[#ff7d91]/12 border-[#ff7d91]/40 text-[#eef3fb]';
+                bgStyle = 'bg-[#ff7d91]/15 border-[#ff7d91]/45 text-[#eef3fb]';
               } else if (hasExecuted) {
-                bgStyle = 'bg-[#8ebeff]/12 border-[#8ebeff]/40 text-[#eef3fb]';
+                bgStyle = 'bg-[#8ebeff]/15 border-[#8ebeff]/45 text-[#eef3fb]';
               } else if (hasOnlyMissed) {
-                bgStyle = 'bg-[#f5cc79]/12 border-[#f5cc79]/40 text-[#eef3fb]';
+                bgStyle = 'bg-[#f5cc79]/15 border-[#f5cc79]/45 text-[#eef3fb]';
               }
 
               return (
@@ -234,8 +234,8 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
                   type="button"
                   onClick={() => setSelectedDate(cell.key)}
                   className={`min-h-[54px] sm:min-h-[66px] rounded-xl border p-1.5 flex flex-col justify-between text-left transition ${bgStyle} ${
-                    isSelected ? 'ring-2 ring-[#47dca0] ring-offset-1 ring-offset-[#0d1423]' : ''
-                  } ${cell.isToday && !isSelected ? 'border-[#8ebeff]' : ''}`}
+                    isSelected ? 'ring-2 ring-[#47dca0]/75 ring-offset-1 ring-offset-[#070b14]' : ''
+                  } ${cell.isToday && !isSelected ? 'border-[#8ebeff]/75' : ''}`}
                 >
                   <div className="flex items-center justify-between w-full">
                     <span
@@ -264,7 +264,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
 
                   {hasExecuted ? (
                     <span
-                      className={`font-mono text-[10px] font-semibold tabular-nums truncate ${
+                      className={`font-mono text-[10px] font-bold tabular-nums truncate ${
                         isPositive
                           ? 'text-[#8df0c0]'
                           : isNegative
@@ -286,7 +286,6 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
             })}
           </div>
 
-          {/* Semantic Legend */}
           <div className="mt-4 pt-3 border-t border-white/[0.08] flex flex-wrap items-center gap-4 text-xs text-[#8b9ab0]">
             <span className="inline-flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-sm bg-[#47dca0]" />
@@ -307,13 +306,11 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
           </div>
         </article>
 
-        {/* Selected Day Review Panel */}
+        {/* Day Review Panel */}
         <article className="lg:col-span-5 xl:col-span-4 rounded-2xl glass-card p-5 flex flex-col justify-between">
           <div>
-            <p className="text-xs font-medium text-[#8df0c0]">
-              Day review
-            </p>
-            <h3 className="mt-1 font-display text-lg font-bold text-[#eef3fb]">
+            <p className="text-xs font-medium text-[#8df0c0]">Day review</p>
+            <h3 className="mt-0.5 font-display text-lg font-bold text-[#eef3fb]">
               {formatDate(selectedDate, {
                 weekday: 'long',
                 month: 'long',
@@ -328,8 +325,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
                 <>
                   {selectedDayStats.totalTrades > 0 && (
                     <>
-                      {selectedDayStats.totalTrades}{' '}
-                      {selectedDayStats.totalTrades === 1 ? 'executed' : 'executed'} · Net{' '}
+                      {selectedDayStats.totalTrades} executed · Net{' '}
                       {formatMetric(
                         selectedDayStats.netR,
                         selectedDayStats.primaryUnit,
@@ -349,8 +345,8 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
 
             <div className="mt-4 space-y-2.5">
               {selectedDayTrades.length === 0 ? (
-                <div className="rounded-xl glass-subcard p-5 text-center text-xs text-[#7c8ca6]">
-                  Nothing logged yet. Use this day to review setups or add an entry.
+                <div className="rounded-xl glass-subcard py-8 px-4 text-center text-xs text-[#8b9ab0]">
+                  Nothing logged yet for this session.
                 </div>
               ) : (
                 selectedDayTrades.map((t) => {
@@ -367,7 +363,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
                       key={t.id}
                       type="button"
                       onClick={() => onSelectTrade(t)}
-                      className="w-full rounded-xl glass-subcard p-3.5 text-left hover:border-[#304466] transition"
+                      className="w-full rounded-xl glass-subcard px-3.5 py-2.5 text-left transition"
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-bold text-sm text-[#eef3fb]">
@@ -377,7 +373,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
                           {formatTradePnL(t, settings?.defaultPnlUnit, settings?.currency)}
                         </span>
                       </div>
-                      <p className="mt-1 text-xs text-[#7f8fa8]">
+                      <p className="mt-0.5 text-xs text-[#7f8fa8]">
                         {formatTime(t.date)} · {t.setup} · {t.session} ·{' '}
                         <span className={t.result === 'Missed' ? 'text-[#f5cc79] font-semibold' : ''}>
                           {t.result}
@@ -393,7 +389,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
           <button
             type="button"
             onClick={() => onLogTradeForDate(selectedDate)}
-            className="mt-5 w-full min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl glass-subcard px-4 py-2.5 text-sm font-semibold text-[#eef3fb] hover:border-[#47dca0]/45 transition"
+            className="mt-5 w-full min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#111c2d] border border-[#23344f] px-4 py-2 text-sm font-semibold text-[#eef3fb] hover:border-[#47dca0]/45 transition"
           >
             <Plus className="w-4 h-4 text-[#8df0c0]" />
             <span>Log trade for this day</span>
@@ -402,29 +398,22 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
       </div>
 
       {/* Day-of-Week Wins & Losses Breakdown (Monday to Sunday) */}
-      <section className="rounded-2xl glass-card p-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/[0.08]">
+      <article className="rounded-2xl glass-card p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/[0.08]">
           <div>
-            <p className="text-xs font-medium text-[#8df0c0]">
-              Monday – Sunday breakdown
-            </p>
+            <p className="text-xs font-medium text-[#8df0c0]">Weekday scorecard</p>
             <h3 className="text-base font-bold text-[#eef3fb]">
-              Wins &amp; losses by day of the week
+              Wins &amp; losses by day of week (Monday – Sunday)
             </h3>
             <p className="mt-0.5 text-xs text-[#8b9ab0] tabular-nums">
               {weekdayScope === 'month' ? monthTitle : 'All recorded trades'} ·{' '}
-              <span className="text-[#47dca0] font-semibold font-mono">
-                {weekdayAnalytics.totalWins}W
-              </span>{' '}
-              /{' '}
-              <span className="text-[#ff7d91] font-semibold font-mono">
-                {weekdayAnalytics.totalLosses}L
-              </span>{' '}
-              across {weekdayAnalytics.totalExecuted} executed
+              <strong className="font-mono text-[#47dca0]">{weekdayAnalytics.totalWins}W</strong> /{' '}
+              <strong className="font-mono text-[#ff7d91]">{weekdayAnalytics.totalLosses}L</strong>{' '}
+              ({weekdayAnalytics.totalExecuted} executed)
               {weekdayAnalytics.bestDay && weekdayAnalytics.bestDay.netR > 0 && (
                 <>
                   {' · '}Most profitable:{' '}
-                  <strong className="text-[#8df0c0]">{weekdayAnalytics.bestDay.fullLabel}</strong>
+                  <strong className="text-[#eef3fb]">{weekdayAnalytics.bestDay.fullLabel}</strong>
                 </>
               )}
             </p>
@@ -433,15 +422,15 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
           <div
             role="group"
             aria-label="Weekday summary scope"
-            className="inline-flex items-center rounded-xl glass-subcard p-1 self-start sm:self-auto shrink-0"
+            className="inline-flex items-center rounded-xl bg-[#090e1a] border border-white/[0.08] p-1 self-start sm:self-auto shrink-0"
           >
             <button
               type="button"
               onClick={() => setWeekdayScope('month')}
               className={`min-h-[34px] rounded-lg px-3 py-1 text-xs font-semibold transition whitespace-nowrap ${
                 weekdayScope === 'month'
-                  ? 'bg-[#47dca0]/20 text-[#8df0c0]'
-                  : 'text-[#8b9ab0] hover:text-[#eef3fb]'
+                  ? 'bg-[#47dca0]/20 text-[#8df0c0] border border-[#47dca0]/35'
+                  : 'text-[#8b9ab0] hover:text-[#eef3fb] border border-transparent'
               }`}
             >
               This month
@@ -451,8 +440,8 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
               onClick={() => setWeekdayScope('all')}
               className={`min-h-[34px] rounded-lg px-3 py-1 text-xs font-semibold transition whitespace-nowrap ${
                 weekdayScope === 'all'
-                  ? 'bg-[#47dca0]/20 text-[#8df0c0]'
-                  : 'text-[#8b9ab0] hover:text-[#eef3fb]'
+                  ? 'bg-[#47dca0]/20 text-[#8df0c0] border border-[#47dca0]/35'
+                  : 'text-[#8b9ab0] hover:text-[#eef3fb] border border-transparent'
               }`}
             >
               All time
@@ -460,7 +449,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
           {weekdayAnalytics.days.map((day) => {
             const isTop =
               Boolean(weekdayAnalytics.bestDay) &&
@@ -473,45 +462,31 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
             return (
               <div
                 key={day.dayIndex}
-                className={`rounded-xl border p-3 flex flex-col justify-between gap-2.5 transition ${
-                  isTop
-                    ? 'bg-[#47dca0]/[0.08] border-[#47dca0]/45'
-                    : 'bg-white/[0.025] border-white/[0.08]'
+                className={`rounded-xl glass-subcard p-3 flex flex-col justify-between gap-2.5 ${
+                  isTop ? 'border-[#47dca0]/45 bg-[#47dca0]/[0.07]' : ''
                 }`}
               >
                 <div className="flex items-center justify-between gap-1">
                   <span className="text-xs font-bold text-[#eef3fb]">{day.shortLabel}</span>
-                  {isTop ? (
-                    <span className="text-[10px] font-semibold text-[#8df0c0]">Top</span>
-                  ) : (
-                    <span className="font-mono text-[10px] tabular-nums text-[#70819b]">
-                      {day.executedCount > 0 ? `${Math.round(day.winRate)}% WR` : '—'}
-                    </span>
-                  )}
+                  <span
+                    className={`font-mono text-[10px] font-semibold tabular-nums ${
+                      isTop ? 'text-[#8df0c0]' : 'text-[#7f8fa8]'
+                    }`}
+                  >
+                    {isTop ? 'Top' : day.executedCount > 0 ? `${Math.round(day.winRate)}%` : '—'}
+                  </span>
                 </div>
 
-                <div className="space-y-1">
-                  <div className="flex items-baseline justify-between gap-2 font-mono tabular-nums">
-                    <span className="text-sm font-bold text-[#47dca0]">{day.wins}W</span>
-                    <span className="text-sm font-bold text-[#ff7d91]">{day.losses}L</span>
-                  </div>
-                  {(day.breakevens > 0 || day.missed > 0) && (
-                    <p className="font-mono text-[10px] tabular-nums text-[#7c8ca6]">
-                      {day.breakevens > 0 ? `${day.breakevens} BE` : ''}
-                      {day.breakevens > 0 && day.missed > 0 ? ' · ' : ''}
-                      {day.missed > 0 ? `${day.missed} missed` : ''}
-                    </p>
-                  )}
+                <div className="flex items-baseline justify-between gap-2 font-mono tabular-nums text-xs">
+                  <span className="font-bold text-[#47dca0]">{day.wins}W</span>
+                  <span className="font-bold text-[#ff7d91]">{day.losses}L</span>
                 </div>
 
                 <div className="space-y-1.5">
                   <div className="h-1.5 w-full rounded-full bg-white/[0.06] overflow-hidden flex">
                     {hasWL ? (
                       <>
-                        <div
-                          className="h-full bg-[#47dca0]"
-                          style={{ width: `${winShare}%` }}
-                        />
+                        <div className="h-full bg-[#47dca0]" style={{ width: `${winShare}%` }} />
                         <div
                           className="h-full bg-[#ff7d91]"
                           style={{ width: `${100 - winShare}%` }}
@@ -519,35 +494,32 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = React.memo(({
                       </>
                     ) : null}
                   </div>
-                  <div className="flex items-center justify-between gap-1 text-[11px] font-mono tabular-nums">
-                    <span className="text-[#7c8ca6]">Net</span>
-                    <span
-                      className={`font-bold ${
-                        day.unitMatchedCount === 0
-                          ? 'text-[#6c7d96]'
-                          : day.netR > 0
-                          ? 'text-[#47dca0]'
-                          : day.netR < 0
-                          ? 'text-[#ff7d91]'
-                          : 'text-[#8ebeff]'
-                      }`}
-                    >
-                      {day.unitMatchedCount > 0
-                        ? formatMetric(
-                            day.netR,
-                            weekdayAnalytics.primaryUnit,
-                            weekdayAnalytics.primaryCurrency,
-                            { decimals: weekdayAnalytics.primaryUnit === 'money' ? 0 : 2 }
-                          )
-                        : '—'}
-                    </span>
-                  </div>
+                  <p
+                    className={`font-mono text-[11px] font-bold tabular-nums text-right ${
+                      day.unitMatchedCount === 0
+                        ? 'text-[#66768f]'
+                        : day.netR > 0
+                        ? 'text-[#47dca0]'
+                        : day.netR < 0
+                        ? 'text-[#ff7d91]'
+                        : 'text-[#8ebeff]'
+                    }`}
+                  >
+                    {day.unitMatchedCount > 0
+                      ? formatMetric(
+                          day.netR,
+                          weekdayAnalytics.primaryUnit,
+                          weekdayAnalytics.primaryCurrency,
+                          { decimals: weekdayAnalytics.primaryUnit === 'money' ? 0 : 2 }
+                        )
+                      : '—'}
+                  </p>
                 </div>
               </div>
             );
           })}
         </div>
-      </section>
+      </article>
     </div>
   );
 });

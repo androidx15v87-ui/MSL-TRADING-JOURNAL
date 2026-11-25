@@ -179,7 +179,23 @@ export const DEFAULT_PLAYBOOK: Playbook = {
 };
 
 export function createDefaultState(): JournalState {
+  const now = new Date().toISOString();
   return {
+    journals: [
+      {
+        id: 'main-journal',
+        name: 'Main Trading Journal',
+        startingBalance: 0,
+        target: 0,
+        currency: 'R',
+        propFirm: '',
+        description: 'Primary R-multiple trading journal',
+        isDeleted: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+    activeJournalId: 'main-journal',
     trades: [],
     models: [],
     fields: DEFAULT_FIELDS.map((f) => ({ ...f, options: [...f.options] })),
@@ -192,7 +208,8 @@ export function createDefaultState(): JournalState {
       quoteNotifications: false,
       defaultPnlUnit: 'r',
       defaultRiskUnit: 'r',
-      currency: '$',
+      currency: 'R',
+      glassTheme: 'midnight-glass',
     },
   };
 }

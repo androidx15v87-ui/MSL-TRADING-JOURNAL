@@ -53,7 +53,7 @@ interface ChatRequestBody {
 const APP_CONTROL_TOOLS: FunctionDeclaration[] = [
   {
     name: 'navigate_app',
-    description: 'Navigate to screen: dashboard, journal, calendar, models, analytics, playbook, ai, or settings.',
+    description: 'Navigate to screen: dashboard, journals, journal, calendar, models, analytics, playbook, ai, or settings.',
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -269,7 +269,7 @@ function selectToolsForMessages(
 
   if (
     /\b(open|go to|switch|navigate|take me|show me|view|jump to)\b/.test(text) &&
-    /\b(dashboard|overview|journal|calendar|models|analytics|playbook|ai|settings|log trade|modal|screen|tab|page)\b/.test(
+    /\b(dashboard|overview|accounts|journals|journal|calendar|models|analytics|playbook|ai|settings|log trade|modal|screen|tab|page)\b/.test(
       text
     )
   ) {
@@ -545,8 +545,9 @@ function formatToolMetric(val: unknown, unit: unknown, currency: unknown): strin
   const abs = Math.abs(num);
   const sign = num > 0 ? '+' : num < 0 ? '-' : '';
   const u = String(unit || 'r');
+  const curr = String(currency || 'R').trim() || 'R';
   if (u === 'percent') return `${sign}${abs}%`;
-  if (u === 'money') return `${sign}${String(currency || '$')}${abs}`;
+  if (u === 'money') return curr.toUpperCase() === 'R' ? `${sign}${abs}R` : `${sign}${curr}${abs}`;
   if (u === 'value') return `${sign}${abs}`;
   return `${sign}${abs}R`;
 }

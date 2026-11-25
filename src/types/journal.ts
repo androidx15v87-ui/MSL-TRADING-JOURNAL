@@ -3,11 +3,13 @@ export type SetupType = 'Reversal' | 'Continuation' | 'Breakout' | 'Other';
 export type SessionType = 'London' | 'New York' | 'Asia' | 'Overlap' | 'Other';
 export type TradeOutcome = 'Win' | 'Loss' | 'BE' | 'Missed';
 export type MetricUnit = 'r' | 'percent' | 'money' | 'value';
+export type GlassTheme = 'midnight-glass' | 'frost-blue' | 'obsidian-gold';
 export type ModelType = 'Reversal' | 'Continuation' | 'Both';
 export type CustomFieldType = 'text' | 'number' | 'both';
 
 export type PageId =
   | 'dashboard'
+  | 'journals'
   | 'journal'
   | 'calendar'
   | 'models'
@@ -30,8 +32,23 @@ export interface TradeScreenshot {
   createdAt: string;
 }
 
+export interface TradingJournal {
+  id: string;
+  name: string;
+  startingBalance: number;
+  target?: number;
+  currency: string;
+  propFirm?: string;
+  description?: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Trade {
   id: string;
+  journalId?: string;
   date: string; // ISO local datetime string YYYY-MM-DDTHH:mm
   pair: string;
   direction: Direction;
@@ -96,9 +113,12 @@ export interface JournalSettings {
   defaultPnlUnit?: MetricUnit;
   defaultRiskUnit?: MetricUnit;
   currency?: string;
+  glassTheme?: GlassTheme;
 }
 
 export interface JournalState {
+  journals: TradingJournal[];
+  activeJournalId?: string | null;
   trades: Trade[];
   models: TradingModel[];
   fields: CustomField[];

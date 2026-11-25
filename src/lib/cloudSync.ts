@@ -25,10 +25,12 @@ import type {
   SessionAlarm,
   Trade,
   TradeScreenshot,
+  TradingJournal,
   TradingModel,
   UserProfile,
 } from '../types/journal';
 import { generateId } from './calculations';
+import { applyLegacyJournalMigration } from './db';
 import { db, handleFirestoreError, OperationType } from './firebase';
 import { VALIDATION_LIMITS, VALIDATION_PATTERNS } from './validationConstants';
 
@@ -111,6 +113,8 @@ function sanitizeTags(tags: string[] | undefined): string[] {
 
 function sanitizeTradePayload(uid: string, trade: Trade) {
   const id = sanitizeId(trade.id);
+  const rawJournalId = typeof trade.journalId === 'string' ? trade.journalId.trim() : '';
+  const journalId = rawJournalId ? sanitizeId(rawJournalId) : undefined;
   const direction = trade.direction === 'Short' ? 'Short' : 'Long';
   const setup = (['Reversal', 'Continuation', 'Breakout', 'Other'].includes(trade.setup)
     ? trade.setup
@@ -128,7 +132,7 @@ function sanitizeTradePayload(uid: string, trade: Trade) {
     ? trade.riskUnit
     : 'r') as NonNullable<Trade['riskUnit']>;
   const currency =
-    (String(trade.currency || '$').trim() || '$').slice(0, VALIDATION_LIMITS.currencyMaxLength);
+    (String(trade.currency || 'R').trim() || 'R').slice(0, VALIDATION_LIMITS.currencyMaxLength);
   const pair = (String(trade.pair || 'UNKNOWN').trim().toUpperCase() || 'UNKNOWN').slice(
     0,
     VALIDATION_LIMITS.tradePairMaxLength
@@ -137,6 +141,7 @@ function sanitizeTradePayload(uid: string, trade: Trade) {
   return {
     id,
     userId: uid,
+    ...(journalId ? { journalId } : {}),
     date: normalizeTradeDate(trade.date),
     pair,
     direction,
@@ -152,6 +157,55 @@ function sanitizeTradePayload(uid: string, trade: Trade) {
     tags: sanitizeTags(trade.tags),
     notes: String(trade.notes || '').slice(0, VALIDATION_LIMITS.tradeNotesMaxLength),
     custom: sanitizeCustomMap(trade.custom),
+  };
+}
+
+function sanitizeTradingJournalPayload(uid: string, journal: TradingJournal) {
+  const id = sanitizeId(journal.id);
+  const name =
+    String(journal.name || 'Trading Journal')
+      .trim()
+      .slice(0, VALIDATION_LIMITS.journalNameMaxLength) || 'Trading Journal';
+  const currency =
+    (String(journal.currency || 'R').trim() || 'R').slice(0, VALIDATION_LIMITS.currencyMaxLength);
+  const isR = currency.toUpperCase() === 'R';
+  const startingBalance = isR
+    ? 0
+    : clampNumber(
+        journal.startingBalance,
+        VALIDATION_LIMITS.journalMonetaryBalanceMin,
+        VALIDATION_LIMITS.journalBalanceMax,
+        10000
+      );
+  const target = clampNumber(
+    journal.target ?? 0,
+    VALIDATION_LIMITS.journalTargetMin,
+    VALIDATION_LIMITS.journalTargetMax,
+    0
+  );
+  const propFirm = String(journal.propFirm || '')
+    .trim()
+    .slice(0, VALIDATION_LIMITS.journalPropFirmMaxLength);
+  const description = String(journal.description || '')
+    .trim()
+    .slice(0, VALIDATION_LIMITS.journalDescriptionMaxLength);
+  const isDeleted = Boolean(journal.isDeleted);
+  const deletedAt =
+    isDeleted && typeof journal.deletedAt === 'string' && journal.deletedAt.trim()
+      ? journal.deletedAt.trim().slice(0, VALIDATION_LIMITS.journalDeletedAtMaxLength)
+      : undefined;
+
+  return {
+    id,
+    userId: uid,
+    name,
+    startingBalance: Math.round(startingBalance * 100) / 100,
+    target: Math.round(target * 100) / 100,
+    currency,
+    propFirm,
+    description,
+    isDeleted,
+    ...(deletedAt ? { deletedAt } : {}),
   };
 }
 
@@ -273,10 +327,15 @@ function sanitizeWorkspaceFields(
     ? state.settings.defaultRiskUnit
     : 'r') as NonNullable<JournalSettings['defaultRiskUnit']>;
   const currency =
-    (String(state.settings.currency || '$').trim() || '$').slice(
+    (String(state.settings.currency || 'R').trim() || 'R').slice(
       0,
       VALIDATION_LIMITS.currencyMaxLength
     );
+  const glassTheme = (VALIDATION_LIMITS.glassThemes.includes(
+    String(state.settings.glassTheme)
+  )
+    ? state.settings.glassTheme
+    : 'midnight-glass') as NonNullable<JournalSettings['glassTheme']>;
   return {
     uid,
     displayName: String(state.profile.name || '').slice(0, VALIDATION_LIMITS.displayNameMaxLength),
@@ -309,6 +368,7 @@ function sanitizeWorkspaceFields(
     defaultPnlUnit,
     defaultRiskUnit,
     currency,
+    glassTheme,
   };
 }
 
@@ -365,6 +425,15 @@ export async function ensureCloudWorkspace(
 async function writeSubcollectionsInBatches(uid: string, state: JournalState): Promise<void> {
   type PendingWrite = { ref: ReturnType<typeof doc>; data: Record<string, unknown>; path: string };
   const writes: PendingWrite[] = [];
+
+  for (const journal of state.journals || []) {
+    const payload = sanitizeTradingJournalPayload(uid, journal);
+    writes.push({
+      ref: doc(db, 'users', uid, 'journals', payload.id),
+      data: { ...payload, createdAt: serverTimestamp(), updatedAt: serverTimestamp() },
+      path: `users/${uid}/journals/${payload.id}`,
+    });
+  }
 
   for (const model of state.models) {
     const payload = sanitizeModelPayload(uid, model);
@@ -431,11 +500,93 @@ async function writeSubcollectionsInBatches(uid: string, state: JournalState): P
   }
 }
 
+export async function cloudSaveJournal(uid: string, journal: TradingJournal): Promise<void> {
+  const payload = sanitizeTradingJournalPayload(uid, journal);
+  const path = `users/${uid}/journals/${payload.id}`;
+  const ref = doc(db, 'users', uid, 'journals', payload.id);
+
+  let exists = false;
+  try {
+    exists = (await getDoc(ref)).exists();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+  }
+
+  try {
+    if (exists) {
+      await updateDoc(ref, {
+        name: payload.name,
+        startingBalance: payload.startingBalance,
+        target: payload.target,
+        currency: payload.currency,
+        propFirm: payload.propFirm,
+        description: payload.description,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(ref, {
+        ...payload,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, exists ? OperationType.UPDATE : OperationType.CREATE, path);
+  }
+}
+
+export async function cloudSoftDeleteJournal(uid: string, journal: TradingJournal): Promise<void> {
+  const cleanId = sanitizeId(journal.id);
+  const path = `users/${uid}/journals/${cleanId}`;
+  const ref = doc(db, 'users', uid, 'journals', cleanId);
+  const deletedAt = (journal.deletedAt || new Date().toISOString()).slice(
+    0,
+    VALIDATION_LIMITS.journalDeletedAtMaxLength
+  );
+
+  let exists = false;
+  try {
+    exists = (await getDoc(ref)).exists();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+  }
+
+  try {
+    if (exists) {
+      await updateDoc(ref, {
+        isDeleted: true,
+        deletedAt,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      const payload = sanitizeTradingJournalPayload(uid, {
+        ...journal,
+        isDeleted: true,
+        deletedAt,
+      });
+      await setDoc(ref, {
+        ...payload,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, exists ? OperationType.UPDATE : OperationType.CREATE, path);
+  }
+}
+
 export async function mergeMissingLocalTradesToCloud(
   uid: string,
   localState: JournalState,
-  cloudTrades: Trade[]
+  cloudTrades: Trade[],
+  cloudJournals: TradingJournal[] = []
 ): Promise<number> {
+  const existingJournalIds = new Set(cloudJournals.map((j) => j.id));
+  const missingJournals = (localState.journals || []).filter((j) => !existingJournalIds.has(j.id));
+  for (const journal of missingJournals) {
+    await cloudSaveJournal(uid, journal);
+  }
+
   const existingIds = new Set(cloudTrades.map((t) => t.id));
   const missing = localState.trades.filter((t) => !existingIds.has(t.id));
   if (missing.length === 0) return 0;
@@ -484,6 +635,7 @@ export async function cloudSaveTrade(uid: string, trade: Trade): Promise<void> {
   const batch = writeBatch(db);
   if (existsInCloud) {
     batch.update(tradeRef, {
+      ...(payload.journalId ? { journalId: payload.journalId } : {}),
       date: payload.date,
       pair: payload.pair,
       direction: payload.direction,
@@ -710,7 +862,12 @@ export async function cloudSaveAlarmsAndSettings(
     ? settings.defaultRiskUnit
     : 'r') as NonNullable<JournalSettings['defaultRiskUnit']>;
   const currency =
-    (String(settings.currency || '$').trim() || '$').slice(0, VALIDATION_LIMITS.currencyMaxLength);
+    (String(settings.currency || 'R').trim() || 'R').slice(0, VALIDATION_LIMITS.currencyMaxLength);
+  const glassTheme = (VALIDATION_LIMITS.glassThemes.includes(
+    String(settings.glassTheme)
+  )
+    ? settings.glassTheme
+    : 'midnight-glass') as NonNullable<JournalSettings['glassTheme']>;
 
   try {
     await updateDoc(doc(db, 'users', uid), {
@@ -719,6 +876,7 @@ export async function cloudSaveAlarmsAndSettings(
       defaultPnlUnit,
       defaultRiskUnit,
       currency,
+      glassTheme,
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
@@ -772,7 +930,14 @@ export async function cloudSaveAlarmsAndSettings(
 }
 
 export async function cloudReplaceFullJournal(uid: string, nextState: JournalState): Promise<void> {
-  const subcollections = ['tradeImages', 'trades', 'models', 'customFields', 'alarms'] as const;
+  const subcollections = [
+    'tradeImages',
+    'trades',
+    'journals',
+    'models',
+    'customFields',
+    'alarms',
+  ] as const;
   const refsToDelete: ReturnType<typeof doc>[] = [];
 
   for (const sub of subcollections) {
@@ -844,6 +1009,7 @@ export function subscribeToCloudJournal(
     playbook: Playbook;
     settings: JournalSettings;
   } | null = null;
+  let journals: TradingJournal[] = [];
   let rawTrades: Omit<Trade, 'images'>[] = [];
   let rawImages: Array<TradeScreenshot & { tradeId: string }> = [];
   let models: TradingModel[] = [];
@@ -852,6 +1018,7 @@ export function subscribeToCloudJournal(
 
   const ready = {
     workspace: false,
+    journals: false,
     trades: false,
     images: false,
     models: false,
@@ -862,6 +1029,7 @@ export function subscribeToCloudJournal(
   const emitIfReady = () => {
     if (
       !ready.workspace ||
+      !ready.journals ||
       !ready.trades ||
       !ready.images ||
       !ready.models ||
@@ -889,7 +1057,8 @@ export function subscribeToCloudJournal(
       images: imagesByTrade.get(t.id) || [],
     }));
 
-    onState({
+    const baseState: JournalState = {
+      journals,
       trades,
       models,
       fields,
@@ -897,7 +1066,9 @@ export function subscribeToCloudJournal(
       alarms: alarms.length > 0 ? alarms : DEFAULT_ALARMS.map((a) => ({ ...a })),
       profile: workspaceData.profile,
       settings: workspaceData.settings,
-    });
+    };
+
+    onState(applyLegacyJournalMigration(baseState).state);
   };
 
   const handleSnapErr = (path: string) => (err: unknown) => {
@@ -942,7 +1113,10 @@ export function subscribeToCloudJournal(
             currency:
               typeof d.currency === 'string' && d.currency.trim()
                 ? d.currency.trim().slice(0, VALIDATION_LIMITS.currencyMaxLength)
-                : '$',
+                : 'R',
+            glassTheme: (VALIDATION_LIMITS.glassThemes.includes(String(d.glassTheme))
+              ? d.glassTheme
+              : 'midnight-glass') as JournalSettings['glassTheme'],
           },
         };
         ready.workspace = true;
@@ -954,12 +1128,48 @@ export function subscribeToCloudJournal(
 
   unsubs.push(
     onSnapshot(
+      query(collection(db, 'users', uid, 'journals'), where('userId', '==', uid)),
+      (snap) => {
+        journals = snap.docs
+          .map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              id: String(d.id || docSnap.id),
+              name: String(d.name || 'Trading Journal'),
+              startingBalance: Number(d.startingBalance ?? 0),
+              target: Number(d.target ?? 0),
+              currency:
+                typeof d.currency === 'string' && d.currency.trim()
+                  ? d.currency.trim().slice(0, VALIDATION_LIMITS.currencyMaxLength)
+                  : 'R',
+              propFirm: typeof d.propFirm === 'string' ? d.propFirm : '',
+              description: typeof d.description === 'string' ? d.description : '',
+              isDeleted: Boolean(d.isDeleted),
+              deletedAt: typeof d.deletedAt === 'string' ? d.deletedAt : undefined,
+              createdAt: timestampToIso(d.createdAt),
+              updatedAt: timestampToIso(d.updatedAt),
+            };
+          })
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        ready.journals = true;
+        emitIfReady();
+      },
+      handleSnapErr(`users/${uid}/journals`)
+    )
+  );
+
+  unsubs.push(
+    onSnapshot(
       query(collection(db, 'users', uid, 'trades'), where('userId', '==', uid)),
       (snap) => {
         rawTrades = snap.docs.map((docSnap) => {
           const d = docSnap.data();
           return {
             id: String(d.id || docSnap.id),
+            journalId:
+              typeof d.journalId === 'string' && d.journalId.trim()
+                ? d.journalId.trim()
+                : undefined,
             date: String(d.date || ''),
             pair: String(d.pair || ''),
             direction: d.direction === 'Short' ? 'Short' : 'Long',
@@ -977,7 +1187,7 @@ export function subscribeToCloudJournal(
             currency:
               typeof d.currency === 'string' && d.currency.trim()
                 ? d.currency.trim().slice(0, VALIDATION_LIMITS.currencyMaxLength)
-                : '$',
+                : 'R',
             model: String(d.model || ''),
             tags: Array.isArray(d.tags) ? d.tags.map(String) : [],
             notes: String(d.notes || ''),

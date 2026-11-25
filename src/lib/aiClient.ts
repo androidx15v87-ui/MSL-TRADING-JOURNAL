@@ -7,6 +7,7 @@ import {
   getUnitShortLabel,
   groupPerformance,
   groupPerformanceByTag,
+  isRJournal,
   normalizeMetricUnit,
 } from './calculations';
 import type {
@@ -118,7 +119,7 @@ let lastLeanCtxValue = '';
 let lastFullCtxValue = '';
 let lastSortedTradesCache: Trade[] = [];
 let lastDefaultUnitCache: Trade['pnlUnit'] = 'r';
-let lastDefaultCurrCache = '$';
+let lastDefaultCurrCache = 'R';
 let lastDefaultRiskUnitCache: Trade['riskUnit'] = 'r';
 
 function promptNeedsFullSnapshot(prompt?: string): boolean {
@@ -224,7 +225,7 @@ export function buildJournalContext(
 
   const defaultUnit = state.settings.defaultPnlUnit || 'r';
   const defaultRiskUnit = state.settings.defaultRiskUnit || 'r';
-  const defaultCurr = state.settings.currency || '$';
+  const defaultCurr = state.settings.currency || 'R';
 
   const stats = calculateStats(state.trades, {
     defaultUnit,
@@ -255,7 +256,41 @@ export function buildJournalContext(
         .join(' | ')}`
     : '';
 
-  const traderLine = `Trader: ${state.profile.name || 'Trader'} | Market: ${state.profile.market || 'Unspecified'} | Default Units: P&L=${getUnitShortLabel(defaultUnit, defaultCurr)}, Risk=${getUnitShortLabel(defaultRiskUnit, defaultCurr)}`;
+  const activeJournal =
+    (state.journals || []).find((j) => !j.isDeleted && j.id === state.activeJournalId) ||
+    (state.journals || []).find((j) => !j.isDeleted);
+  const journalScopeInfo = activeJournal
+    ? (() => {
+        const parts: string[] = [];
+        if (isRJournal(activeJournal)) {
+          parts.push('R-Mode, No Starting Balance');
+        } else {
+          parts.push(
+            `Start ${formatMetric(activeJournal.startingBalance, 'money', activeJournal.currency || 'R', {
+              signed: false,
+              decimals: activeJournal.startingBalance % 1 === 0 ? 0 : 2,
+            })}`
+          );
+        }
+        if ((activeJournal.target || 0) > 0) {
+          parts.push(
+            `Target ${
+              isRJournal(activeJournal)
+                ? formatMetric(activeJournal.target, 'r', 'R', { signed: true })
+                : formatMetric(activeJournal.target, 'money', activeJournal.currency || 'R', {
+                    signed: true,
+                    decimals: (activeJournal.target || 0) % 1 === 0 ? 0 : 2,
+                  })
+            }`
+          );
+        }
+        if (activeJournal.propFirm) {
+          parts.push(activeJournal.propFirm);
+        }
+        return ` | Active Journal: ${activeJournal.name} (${parts.join(', ')})`;
+      })()
+    : ' | Active Journal: None';
+  const traderLine = `Trader: ${state.profile.name || 'Trader'}${journalScopeInfo} | Market: ${state.profile.market || 'Unspecified'} | Default Units: P&L=${getUnitShortLabel(defaultUnit, defaultCurr)}, Risk=${getUnitShortLabel(defaultRiskUnit, defaultCurr)}`;
   const statsLine = `Total PnL & Stats (${getUnitShortLabel(activeUnit, activeCurr)}): Net PnL ${fmt(stats.netR)} | Total Profits +${fmtAbs(stats.grossWin)} | Total Losses -${fmtAbs(stats.grossLoss)} | ${stats.totalTrades} executed (${stats.missed.length} missed) | WR ${stats.winRate.toFixed(1)}% (${stats.wins.length}W/${stats.losses.length}L/${stats.breakevens.length}BE/${stats.missed.length}Missed) | Exp ${fmt(stats.expectancy)} | PF ${stats.profitFactor === Infinity ? '∞' : stats.profitFactor.toFixed(2)} | AvgW ${fmt(stats.avgWinner)} | AvgL ${fmt(stats.avgLoser)} | MaxDD -${fmtAbs(stats.maxDrawdownR)} | Best Session ${stats.bestSession ? `${stats.bestSession.name} (${fmt(stats.bestSession.netR)})` : 'None'}`;
   const memoryBlock = memoryLines.length
     ? `Saved User Memories (${memoryLines.length}):\n${memoryLines.join('\n')}`

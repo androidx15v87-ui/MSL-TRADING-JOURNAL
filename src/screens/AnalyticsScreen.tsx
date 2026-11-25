@@ -27,12 +27,14 @@ import type { JournalSettings, MetricUnit, Trade } from '../types/journal';
 interface AnalyticsScreenProps {
   trades: Trade[];
   settings?: JournalSettings;
+  activeJournalName?: string;
   onSelectTrade: (trade: Trade) => void;
 }
 
 export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
   trades,
   settings,
+  activeJournalName,
   onSelectTrade,
 }) => {
   const [selectedUnit, setSelectedUnit] = useState<MetricUnit | undefined>(undefined);
@@ -79,7 +81,7 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
       : trades;
     return [...unitMatched]
       .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, 16)
+      .slice(0, 14)
       .reverse();
   }, [trades, unitFilter]);
 
@@ -123,184 +125,139 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <p className="text-xs font-medium text-[#8df0c0]">
-            Measure the edge
-          </p>
+          <p className="text-xs font-medium text-[#8df0c0]">Evidence &amp; edge</p>
           <h2 className="mt-0.5 font-display text-2xl font-extrabold text-[#eef3fb]">
             Performance analytics
           </h2>
           <p className="mt-1 text-sm text-[#8b9ab0]">
-            Computed directly from executed trades. Audit expectancy, drawdown, missed setups, and behavioral tags.
+            {activeJournalName
+              ? `Computed from executed trades inside ${activeJournalName}.`
+              : 'Computed directly from executed trades.'}
           </p>
         </div>
 
         {stats.unitBreakdown.length > 1 && (
           <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-            {stats.unitBreakdown.map((item) => {
-              const active = item.unit === activeUnit;
-              return (
-                <button
-                  key={item.unit}
-                  type="button"
-                  onClick={() => setSelectedUnit(item.unit)}
-                  title={getUnitLongLabel(item.unit, item.currency)}
-                  className={`min-h-[36px] rounded-xl px-3 py-1.5 text-xs font-semibold border transition tabular-nums ${
-                    active
-                      ? 'bg-[#47dca0]/18 border-[#47dca0]/55 text-[#8df0c0]'
-                      : 'glass-subcard text-[#9aa8be] hover:text-[#eef3fb]'
-                  }`}
-                >
-                  {getUnitShortLabel(item.unit, item.currency)} · {item.count}
-                </button>
-              );
-            })}
+            {stats.unitBreakdown.map((item) => (
+              <button
+                key={item.unit}
+                type="button"
+                onClick={() => setSelectedUnit(item.unit)}
+                title={getUnitLongLabel(item.unit, item.currency)}
+                className={`min-h-[38px] rounded-xl px-3 py-1.5 text-xs font-semibold border transition tabular-nums ${
+                  item.unit === activeUnit
+                    ? 'bg-[#47dca0]/18 border-[#47dca0]/45 text-[#8df0c0]'
+                    : 'bg-[#111c2d] border-[#23344f] text-[#8b9ab0] hover:text-[#eef3fb]'
+                }`}
+              >
+                {getUnitShortLabel(item.unit, item.currency)} · {item.count}
+              </button>
+            ))}
           </div>
         )}
       </div>
 
-      {/* Featured Total PnL Liquid-Glass Breakdown */}
-      <section aria-label="Total PnL Summary" className="rounded-2xl liquid-glass p-5">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 items-center">
-          <div>
-            <p className="text-xs font-medium text-[#8b9ab0]">Total Net PnL</p>
-            <p
-              className={`mt-1.5 font-mono text-2xl sm:text-3xl font-bold tabular-nums tracking-tight ${
-                stats.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
-              }`}
-            >
-              {formatMetric(stats.netR, activeUnit, activeCurrency)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-medium text-[#8b9ab0]">Total Profits</p>
-            <p className="mt-1.5 font-mono text-xl sm:text-2xl font-bold tabular-nums text-[#47dca0]">
-              {formatMetric(stats.grossWin, activeUnit, activeCurrency)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-medium text-[#8b9ab0]">Total Losses</p>
-            <p className="mt-1.5 font-mono text-xl sm:text-2xl font-bold tabular-nums text-[#ff7d91]">
-              {formatMetric(-stats.grossLoss, activeUnit, activeCurrency)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-medium text-[#8b9ab0]">Profit Factor</p>
-            <p className="mt-1.5 font-mono text-xl sm:text-2xl font-bold tabular-nums text-[#eef3fb]">
-              {stats.profitFactor === Infinity ? '∞' : stats.profitFactor.toFixed(2)}
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* Top 4 Core Analytics Stat Cards */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
-        <article className="rounded-2xl glass-card p-4 sm:p-5">
-          <p className="text-xs font-medium text-[#8b9ab0]">Trades executed</p>
-          <p className="mt-2 font-mono text-2xl sm:text-3xl font-bold tabular-nums text-[#eef3fb]">
-            {stats.totalTrades}
-          </p>
-          <p className="mt-1 text-xs text-[#7989a1] tabular-nums">
-            {stats.missed.length > 0 ? (
-              <span className="text-[#f5cc79] font-semibold">
-                {stats.missed.length} missed setup{stats.missed.length === 1 ? '' : 's'}
-              </span>
-            ) : (
-              'Executed sample size'
-            )}
-          </p>
-        </article>
-
-        <article className="rounded-2xl glass-card p-4 sm:p-5">
-          <p className="text-xs font-medium text-[#8b9ab0]">Average winner</p>
-          <p className="mt-2 font-mono text-2xl sm:text-3xl font-bold tabular-nums text-[#47dca0]">
-            {formatMetric(stats.avgWinner, activeUnit, activeCurrency)}
-          </p>
-          <p className="mt-1 text-xs text-[#7989a1]">Winning executions</p>
-        </article>
-
-        <article className="rounded-2xl glass-card p-4 sm:p-5">
-          <p className="text-xs font-medium text-[#8b9ab0]">Average loser</p>
-          <p className="mt-2 font-mono text-2xl sm:text-3xl font-bold tabular-nums text-[#ff7d91]">
-            {formatMetric(stats.avgLoser, activeUnit, activeCurrency)}
-          </p>
-          <p className="mt-1 text-xs text-[#7989a1]">Losing executions</p>
-        </article>
-
-        <article className="rounded-2xl glass-card p-4 sm:p-5">
-          <p className="text-xs font-medium text-[#8b9ab0]">Best session</p>
-          <p className="mt-2 font-display text-xl sm:text-2xl font-extrabold text-[#8df0c0] truncate">
-            {stats.bestSession ? stats.bestSession.name : '—'}
-          </p>
-          <p className="mt-1 text-xs font-mono tabular-nums text-[#7989a1]">
-            {stats.bestSession
-              ? `${formatMetric(stats.bestSession.netR, activeUnit, activeCurrency)} net`
-              : `By net ${unitShort}`}
-          </p>
-        </article>
-      </section>
-
-      {/* Secondary Risk & Streak Telemetry Strip */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
-        <article className="rounded-2xl glass-subcard p-4">
-          <p className="text-[11px] font-medium text-[#8b9ab0]">Max drawdown</p>
-          <p className="mt-1.5 font-mono text-lg sm:text-xl font-bold tabular-nums text-[#ff7d91]">
-            {formatMetric(-stats.maxDrawdownR, activeUnit, activeCurrency)}
-          </p>
-          <p className="mt-0.5 text-[11px] text-[#70819b]">Peak-to-trough {unitShort}</p>
-        </article>
-
-        <article className="rounded-2xl glass-subcard p-4">
-          <p className="text-[11px] font-medium text-[#8b9ab0]">Current streak</p>
+      {/* Primary KPI Grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <article className="rounded-2xl liquid-glass p-5">
+          <p className="text-xs font-medium text-[#8b9ab0]">Total Net P&amp;L</p>
           <p
-            className={`mt-1.5 font-mono text-lg sm:text-xl font-bold tabular-nums ${
-              stats.currentStreak.type === 'Win'
-                ? 'text-[#47dca0]'
-                : stats.currentStreak.type === 'Loss'
-                ? 'text-[#ff7d91]'
-                : 'text-[#eef3fb]'
+            className={`mt-2 font-mono text-2xl sm:text-3xl font-bold tabular-nums ${
+              stats.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
             }`}
           >
-            {streakLabel}
+            {formatMetric(stats.netR, activeUnit, activeCurrency)}
           </p>
-          <p className="mt-0.5 text-[11px] text-[#70819b] tabular-nums">
-            Best win streak: {stats.bestWinStreak}W
+          <p className="mt-1.5 text-xs text-[#7f8fa8] tabular-nums">
+            {formatMetric(stats.grossWin, activeUnit, activeCurrency, {
+              decimals: activeUnit === 'money' ? 0 : 1,
+            })}{' '}
+            win /{' '}
+            {formatMetric(-stats.grossLoss, activeUnit, activeCurrency, {
+              decimals: activeUnit === 'money' ? 0 : 1,
+            })}{' '}
+            loss
           </p>
         </article>
 
-        <article className="rounded-2xl glass-subcard p-4">
-          <p className="text-[11px] font-medium text-[#8b9ab0]">Best single trade</p>
-          <p className="mt-1.5 font-mono text-lg sm:text-xl font-bold tabular-nums text-[#47dca0]">
+        <article className="rounded-2xl glass-card p-5">
+          <p className="text-xs font-medium text-[#8b9ab0]">Win rate</p>
+          <p className="mt-2 font-mono text-2xl sm:text-3xl font-bold tabular-nums text-[#eef3fb]">
+            {stats.totalTrades > 0 ? `${Math.round(stats.winRate)}%` : '—'}
+          </p>
+          <p className="mt-1.5 text-xs text-[#7f8fa8] tabular-nums">
+            {stats.totalTrades} executed
+            {stats.missed.length > 0 ? ` · ${stats.missed.length} missed` : ''}
+          </p>
+        </article>
+
+        <article className="rounded-2xl glass-card p-5">
+          <p className="text-xs font-medium text-[#8b9ab0]">Profit factor</p>
+          <p className="mt-2 font-mono text-2xl sm:text-3xl font-bold tabular-nums text-[#eef3fb]">
+            {stats.totalTrades > 0
+              ? stats.profitFactor === Infinity
+                ? '∞'
+                : stats.profitFactor.toFixed(2)
+              : '—'}
+          </p>
+          <p className="mt-1.5 text-xs text-[#7f8fa8] tabular-nums">
+            Expectancy {formatMetric(stats.expectancy, activeUnit, activeCurrency)}
+          </p>
+        </article>
+
+        <article className="rounded-2xl glass-card p-5">
+          <p className="text-xs font-medium text-[#8b9ab0]">Max drawdown</p>
+          <p className="mt-2 font-mono text-2xl sm:text-3xl font-bold tabular-nums text-[#ff7d91]">
+            {stats.totalTrades > 0
+              ? formatMetric(-stats.maxDrawdownR, activeUnit, activeCurrency)
+              : '—'}
+          </p>
+          <p className="mt-1.5 text-xs text-[#7f8fa8] tabular-nums">
+            Streak {streakLabel} · Best {stats.bestWinStreak}W
+          </p>
+        </article>
+      </div>
+
+      {/* Secondary Edge Metrics */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div className="rounded-xl glass-subcard px-4 py-3">
+          <p className="text-[11px] text-[#7f8fa8]">Average winner</p>
+          <p className="mt-1 font-mono text-base font-bold tabular-nums text-[#47dca0]">
+            {formatMetric(stats.avgWinner, activeUnit, activeCurrency)}
+          </p>
+        </div>
+        <div className="rounded-xl glass-subcard px-4 py-3">
+          <p className="text-[11px] text-[#7f8fa8]">Average loser</p>
+          <p className="mt-1 font-mono text-base font-bold tabular-nums text-[#ff7d91]">
+            {formatMetric(stats.avgLoser, activeUnit, activeCurrency)}
+          </p>
+        </div>
+        <div className="rounded-xl glass-subcard px-4 py-3">
+          <p className="text-[11px] text-[#7f8fa8]">Best single trade</p>
+          <p className="mt-1 font-mono text-base font-bold tabular-nums text-[#eef3fb]">
             {stats.totalTrades > 0
               ? formatMetric(stats.bestTradeR, activeUnit, activeCurrency)
               : '—'}
           </p>
-          <p className="mt-0.5 text-[11px] text-[#70819b]">Peak {unitShort} capture</p>
-        </article>
-
-        <article className="rounded-2xl glass-subcard p-4">
-          <p className="text-[11px] font-medium text-[#8b9ab0]">Worst single trade</p>
-          <p className="mt-1.5 font-mono text-lg sm:text-xl font-bold tabular-nums text-[#ff7d91]">
-            {stats.totalTrades > 0
-              ? formatMetric(stats.worstTradeR, activeUnit, activeCurrency)
-              : '—'}
+        </div>
+        <div className="rounded-xl glass-subcard px-4 py-3">
+          <p className="text-[11px] text-[#7f8fa8]">Top session</p>
+          <p className="mt-1 text-base font-bold text-[#8df0c0] truncate">
+            {stats.bestSession ? stats.bestSession.name : '—'}
           </p>
-          <p className="mt-0.5 text-[11px] text-[#70819b]">Max single loss</p>
-        </article>
-      </section>
+        </div>
+      </div>
 
-      {/* Interactive Recharts Cumulative Equity Curve */}
+      {/* Equity Curve */}
       {equityPoints.length >= 2 && (
         <article className="rounded-2xl glass-card p-5">
-          <div className="flex items-center justify-between gap-4 pb-3 border-b border-white/[0.08]">
+          <div className="flex items-center justify-between gap-3 pb-3 border-b border-white/[0.08]">
             <div>
-              <p className="text-xs font-medium text-[#8df0c0]">
-                Equity progression
-              </p>
-              <h3 className="text-base font-bold text-[#eef3fb]">
-                Cumulative {unitShort} curve
-              </h3>
+              <p className="text-xs font-medium text-[#8df0c0]">Cumulative curve</p>
+              <h3 className="text-base font-bold text-[#eef3fb]">Equity progression ({unitShort})</h3>
             </div>
             <span
               className={`font-mono text-sm font-bold tabular-nums ${
@@ -311,9 +268,9 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
             </span>
           </div>
 
-          <div className="mt-4 h-56 w-full">
+          <div className="mt-4 h-60 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={equityPoints} margin={{ top: 10, right: 12, left: -10, bottom: 0 }}>
+              <AreaChart data={equityPoints} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
                 <defs>
                   <linearGradient id="analyticsEqFill" x1="0" y1="0" x2="0" y2="1">
                     <stop
@@ -328,7 +285,11 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
                     />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="rgba(255,255,255,0.06)" strokeDasharray="3 3" vertical={false} />
+                <CartesianGrid
+                  stroke="rgba(255,255,255,0.06)"
+                  strokeDasharray="3 3"
+                  vertical={false}
+                />
                 <XAxis
                   dataKey="label"
                   tick={{ fill: '#8b9ab0', fontSize: 11 }}
@@ -345,7 +306,7 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
                     })
                   }
                 />
-                <ReferenceLine y={0} stroke="rgba(255,255,255,0.18)" />
+                <ReferenceLine y={0} stroke="rgba(255,255,255,0.16)" />
                 <Tooltip
                   content={({ active, payload }) => {
                     if (!active || !payload || payload.length === 0) return null;
@@ -355,7 +316,7 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
                         <p className="font-bold text-[#eef3fb]">
                           Trade #{pt.index} · {pt.pair}
                         </p>
-                        <p className="text-[#9aa8be]">{formatDate(pt.date)}</p>
+                        <p className="text-[#8b9ab0]">{formatDate(pt.date)}</p>
                         <p className="text-[#9aa8be] tabular-nums">
                           Trade:{' '}
                           <span
@@ -380,10 +341,10 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
                   type="monotone"
                   dataKey="equityR"
                   stroke={finalEquityR < 0 ? '#ff7d91' : '#47dca0'}
-                  strokeWidth={2.5}
+                  strokeWidth={2.2}
                   fill="url(#analyticsEqFill)"
-                  animationDuration={240}
-                  dot={{ r: 3, fill: finalEquityR < 0 ? '#ff7d91' : '#8df0c0', strokeWidth: 0 }}
+                  animationDuration={260}
+                  dot={{ r: 2.8, fill: finalEquityR < 0 ? '#ff7d91' : '#8df0c0', strokeWidth: 0 }}
                   activeDot={{ r: 5, fill: '#eef3fb' }}
                 />
               </AreaChart>
@@ -392,132 +353,16 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
         </article>
       )}
 
-      {/* Performance by Day of the Week (Monday - Sunday) & Most Profitable Day Highlight */}
-      <section aria-label="Day of week performance" className="rounded-2xl glass-card p-5">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-white/[0.08]">
-          <div>
-            <p className="text-xs font-medium text-[#8df0c0]">
-              Monday – Sunday edge
-            </p>
-            <h3 className="text-base font-bold text-[#eef3fb]">
-              Performance by day of the week
-            </h3>
-            <p className="mt-0.5 text-xs text-[#8b9ab0]">
-              Wins, losses, win rate, and net {unitShort} calculated across every weekday.
-            </p>
+      {/* Breakdown by Setup, Session, and Label */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <article className="rounded-2xl glass-card p-5 space-y-4">
+          <div className="pb-3 border-b border-white/[0.08]">
+            <p className="text-xs font-medium text-[#8df0c0]">Strategy edge</p>
+            <h3 className="text-base font-bold text-[#eef3fb]">By setup ({unitShort})</h3>
           </div>
-
-          <div className="rounded-xl liquid-glass px-4 py-3 flex items-center justify-between gap-5 shrink-0">
-            <div>
-              <p className="text-[11px] font-medium text-[#8b9ab0]">
-                {mostProfitableWeekday && mostProfitableWeekday.netR <= 0
-                  ? 'Strongest relative day'
-                  : 'Most profitable day'}
-              </p>
-              <p className="mt-0.5 font-display text-lg font-extrabold text-[#eef3fb]">
-                {mostProfitableWeekday ? mostProfitableWeekday.fullLabel : '—'}
-              </p>
-              {mostProfitableWeekday && (
-                <p className="mt-0.5 text-[11px] font-mono tabular-nums text-[#8b9ab0]">
-                  {mostProfitableWeekday.wins}W · {mostProfitableWeekday.losses}L ·{' '}
-                  {Math.round(mostProfitableWeekday.winRate)}% WR
-                </p>
-              )}
-            </div>
-            {mostProfitableWeekday && (
-              <div className="text-right font-mono tabular-nums">
-                <p
-                  className={`text-lg font-bold ${
-                    mostProfitableWeekday.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
-                  }`}
-                >
-                  {formatMetric(mostProfitableWeekday.netR, activeUnit, activeCurrency)}
-                </p>
-                <p className="text-[11px] text-[#7f8fa8]">Net {unitShort}</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="mt-4 space-y-3">
-          {byWeekday.map((day) => {
-            const pct = Math.min(100, (Math.abs(day.netR) / maxWeekdayAbs) * 100);
-            const isTop =
-              Boolean(mostProfitableWeekday) &&
-              mostProfitableWeekday!.dayIndex === day.dayIndex;
-            const isNegative = day.netR < 0;
-            const hasTrades = day.unitMatchedCount > 0;
-
-            return (
-              <div
-                key={day.dayIndex}
-                className={`rounded-xl px-3 py-2.5 transition ${
-                  isTop && day.netR > 0
-                    ? 'bg-[#47dca0]/[0.07] border border-[#47dca0]/35'
-                    : 'bg-white/[0.02] border border-white/[0.06]'
-                }`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs mb-1.5">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="font-bold text-[#eef3fb] w-24 shrink-0">
-                      {day.fullLabel}
-                    </span>
-                    {isTop && day.netR > 0 && (
-                      <span className="text-[11px] font-semibold text-[#8df0c0]">
-                        · Most profitable
-                      </span>
-                    )}
-                    <span className="font-mono tabular-nums text-[#8b9ab0]">
-                      <span className="text-[#47dca0] font-semibold">{day.wins}W</span>
-                      {' · '}
-                      <span className="text-[#ff7d91] font-semibold">{day.losses}L</span>
-                      {day.breakevens > 0 ? ` · ${day.breakevens}BE` : ''}
-                      {day.executedCount > 0
-                        ? ` · ${Math.round(day.winRate)}% WR`
-                        : ' · No executed trades'}
-                    </span>
-                  </div>
-
-                  <span
-                    className={`font-mono font-bold tabular-nums shrink-0 ${
-                      !hasTrades
-                        ? 'text-[#6c7d96]'
-                        : isNegative
-                        ? 'text-[#ff7d91]'
-                        : day.netR > 0
-                        ? 'text-[#47dca0]'
-                        : 'text-[#8ebeff]'
-                    }`}
-                  >
-                    {hasTrades ? formatMetric(day.netR, activeUnit, activeCurrency) : '—'}
-                  </span>
-                </div>
-
-                <div className="h-2 rounded-full bg-white/[0.06] overflow-hidden">
-                  {hasTrades && day.netR !== 0 && (
-                    <div
-                      className={`h-full rounded-full transition-all duration-300 ${
-                        isNegative ? 'bg-[#ff7d91]' : 'bg-[#47dca0]'
-                      }`}
-                      style={{ width: `${Math.max(4, pct)}%` }}
-                    />
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* Net PnL by Setup, Session & Behavioral Tags */}
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5">
-        <article className="rounded-2xl glass-card p-5">
-          <h3 className="text-base font-bold text-[#eef3fb] pb-3 border-b border-white/[0.08]">
-            Net {unitShort} by setup
-          </h3>
-          <div className="mt-4 space-y-3.5">
+          <div className="space-y-3.5">
             {bySetup.length === 0 ? (
-              <p className="text-sm text-[#7f8fa8]">Not enough data yet.</p>
+              <p className="text-sm text-[#8b9ab0]">Log trades to see setup breakdown.</p>
             ) : (
               bySetup.map((item) => {
                 const pct = Math.min(100, (Math.abs(item.netR) / maxSetupAbs) * 100);
@@ -525,10 +370,10 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
                 return (
                   <div key={item.label} className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-[#d5dfef]">
-                        {item.label}
-                        <span className="ml-2 text-[#7888a1] font-normal tabular-nums">
-                          {item.count} · {Math.round(item.winRate)}% WR
+                      <span className="font-semibold text-[#eef3fb]">
+                        {item.label}{' '}
+                        <span className="text-[#7f8fa8] font-normal tabular-nums">
+                          ({item.count} · {Math.round(item.winRate)}% WR)
                         </span>
                       </span>
                       <span
@@ -554,13 +399,14 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
           </div>
         </article>
 
-        <article className="rounded-2xl glass-card p-5">
-          <h3 className="text-base font-bold text-[#eef3fb] pb-3 border-b border-white/[0.08]">
-            Net {unitShort} by session
-          </h3>
-          <div className="mt-4 space-y-3.5">
+        <article className="rounded-2xl glass-card p-5 space-y-4">
+          <div className="pb-3 border-b border-white/[0.08]">
+            <p className="text-xs font-medium text-[#8ebeff]">Timing windows</p>
+            <h3 className="text-base font-bold text-[#eef3fb]">By session ({unitShort})</h3>
+          </div>
+          <div className="space-y-3.5">
             {bySession.length === 0 ? (
-              <p className="text-sm text-[#7f8fa8]">Not enough data yet.</p>
+              <p className="text-sm text-[#8b9ab0]">Log trades to see session breakdown.</p>
             ) : (
               bySession.map((item) => {
                 const pct = Math.min(100, (Math.abs(item.netR) / maxSessionAbs) * 100);
@@ -568,10 +414,10 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
                 return (
                   <div key={item.label} className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-[#d5dfef]">
-                        {item.label}
-                        <span className="ml-2 text-[#7888a1] font-normal tabular-nums">
-                          {item.count} · {Math.round(item.winRate)}% WR
+                      <span className="font-semibold text-[#eef3fb]">
+                        {item.label}{' '}
+                        <span className="text-[#7f8fa8] font-normal tabular-nums">
+                          ({item.count} · {Math.round(item.winRate)}% WR)
                         </span>
                       </span>
                       <span
@@ -597,14 +443,15 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
           </div>
         </article>
 
-        <article className="rounded-2xl glass-card p-5">
-          <h3 className="text-base font-bold text-[#eef3fb] pb-3 border-b border-white/[0.08]">
-            Behavior & edge by tag
-          </h3>
-          <div className="mt-4 space-y-3.5">
+        <article className="rounded-2xl glass-card p-5 space-y-4">
+          <div className="pb-3 border-b border-white/[0.08]">
+            <p className="text-xs font-medium text-[#8df0c0]">Execution habits</p>
+            <h3 className="text-base font-bold text-[#eef3fb]">By label</h3>
+          </div>
+          <div className="space-y-3.5">
             {byTag.length === 0 ? (
-              <p className="text-sm text-[#7f8fa8]">
-                Add labels like Patient, FOMO, or High-Conviction when logging trades to uncover behavioral leaks and strengths.
+              <p className="text-xs leading-relaxed text-[#8b9ab0]">
+                Add labels like Patient, A+ Setup, or FOMO when logging trades to reveal behavioral habits.
               </p>
             ) : (
               byTag.map((item) => {
@@ -613,10 +460,10 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
                 return (
                   <div key={item.label} className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs gap-2">
-                      <span className="font-semibold text-[#d5dfef] truncate">
-                        #{item.label}
-                        <span className="ml-2 text-[#7888a1] font-normal tabular-nums">
-                          {item.count} · {Math.round(item.winRate)}% WR
+                      <span className="font-semibold text-[#eef3fb] truncate">
+                        #{item.label}{' '}
+                        <span className="text-[#7f8fa8] font-normal tabular-nums">
+                          ({item.count} · {Math.round(item.winRate)}% WR)
                         </span>
                       </span>
                       <span
@@ -641,24 +488,138 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
             )}
           </div>
         </article>
-      </section>
+      </div>
+
+      {/* Day of Week (Monday to Sunday) & Most Profitable Day */}
+      <article className="rounded-2xl glass-card p-5 space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-white/[0.08]">
+          <div>
+            <p className="text-xs font-medium text-[#8df0c0]">Weekly rhythm</p>
+            <h3 className="text-base font-bold text-[#eef3fb]">
+              Day-of-week performance (Monday – Sunday)
+            </h3>
+            <p className="mt-0.5 text-xs text-[#8b9ab0]">
+              Wins, losses, win rate, and net {unitShort} profit across each weekday.
+            </p>
+          </div>
+
+          <div className="rounded-xl glass-subcard px-4 py-2.5 flex items-center gap-4 shrink-0">
+            <div>
+              <p className="text-[11px] font-medium text-[#8b9ab0]">
+                {mostProfitableWeekday && mostProfitableWeekday.netR <= 0
+                  ? 'Strongest relative day'
+                  : 'Most profitable day'}
+              </p>
+              <p className="font-display text-base font-extrabold text-[#eef3fb]">
+                {mostProfitableWeekday ? mostProfitableWeekday.fullLabel : '—'}
+              </p>
+            </div>
+            {mostProfitableWeekday && (
+              <div className="pl-4 border-l border-white/[0.1] font-mono tabular-nums text-right">
+                <p
+                  className={`text-base font-bold ${
+                    mostProfitableWeekday.netR < 0 ? 'text-[#ff7d91]' : 'text-[#47dca0]'
+                  }`}
+                >
+                  {formatMetric(mostProfitableWeekday.netR, activeUnit, activeCurrency)}
+                </p>
+                <p className="text-[11px] text-[#8b9ab0]">
+                  {mostProfitableWeekday.wins}W · {mostProfitableWeekday.losses}L ·{' '}
+                  {Math.round(mostProfitableWeekday.winRate)}% WR
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+          {byWeekday.map((day) => {
+            const pct = Math.min(100, (Math.abs(day.netR) / maxWeekdayAbs) * 100);
+            const isTop =
+              Boolean(mostProfitableWeekday) &&
+              mostProfitableWeekday!.dayIndex === day.dayIndex &&
+              day.netR > 0;
+            const isNegative = day.netR < 0;
+            const hasTrades = day.unitMatchedCount > 0;
+
+            return (
+              <div
+                key={day.dayIndex}
+                className={`rounded-xl glass-subcard p-3.5 space-y-2 ${
+                  isTop ? 'border-[#47dca0]/45 bg-[#47dca0]/[0.06]' : ''
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-bold text-[#eef3fb]">{day.fullLabel}</span>
+                    {isTop && (
+                      <span className="rounded-md bg-[#47dca0]/18 border border-[#47dca0]/40 px-1.5 py-0.5 text-[10px] font-bold text-[#8df0c0]">
+                        Most profitable
+                      </span>
+                    )}
+                  </div>
+                  <span
+                    className={`font-mono font-bold tabular-nums shrink-0 ${
+                      !hasTrades
+                        ? 'text-[#66768f]'
+                        : isNegative
+                        ? 'text-[#ff7d91]'
+                        : day.netR > 0
+                        ? 'text-[#47dca0]'
+                        : 'text-[#8ebeff]'
+                    }`}
+                  >
+                    {hasTrades ? formatMetric(day.netR, activeUnit, activeCurrency) : '—'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] font-mono tabular-nums text-[#8b9ab0]">
+                  <span>
+                    <strong className="text-[#47dca0]">{day.wins}W</strong>
+                    {' · '}
+                    <strong className="text-[#ff7d91]">{day.losses}L</strong>
+                    {day.breakevens > 0 ? ` · ${day.breakevens}BE` : ''}
+                  </span>
+                  <span>
+                    {day.executedCount > 0 ? `${Math.round(day.winRate)}% win rate` : 'No trades'}
+                  </span>
+                </div>
+
+                <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                  {hasTrades && day.netR !== 0 && (
+                    <div
+                      className={`h-full rounded-full ${
+                        isNegative ? 'bg-[#ff7d91]' : 'bg-[#47dca0]'
+                      }`}
+                      style={{ width: `${Math.max(4, pct)}%` }}
+                    />
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </article>
 
       {/* Recent Trade Outcomes Bar Chart */}
-      <article className="rounded-2xl glass-card p-5">
+      <article className="rounded-2xl glass-card p-5 space-y-4">
         <div className="flex items-center justify-between gap-3 pb-3 border-b border-white/[0.08]">
-          <h3 className="text-base font-bold text-[#eef3fb]">Recent trade outcomes</h3>
-          <span className="text-xs text-[#7f8fa8]">Tap any bar to inspect</span>
+          <div>
+            <p className="text-xs font-medium text-[#8ebeff]">Sequence</p>
+            <h3 className="text-base font-bold text-[#eef3fb]">Recent trade outcomes</h3>
+          </div>
+          <span className="text-xs text-[#8b9ab0]">Click any bar to inspect</span>
         </div>
 
         {recentTrades.length === 0 ? (
-          <p className="py-8 text-center text-sm text-[#7f8fa8]">
+          <p className="py-10 text-center text-sm text-[#8b9ab0]">
             Trade outcomes will appear here once trades are logged.
           </p>
         ) : (
-          <div className="mt-5 flex items-end gap-2 sm:gap-3 overflow-x-auto pb-2 min-h-[148px]">
+          <div className="flex items-end gap-2 sm:gap-3 overflow-x-auto pb-2 min-h-[144px]">
             {recentTrades.map((t) => {
               const rVal = Number(t.r || 0);
-              const heightPx = Math.max(10, Math.round((Math.abs(rVal) / maxRecentAbs) * 86));
+              const heightPx = Math.max(10, Math.round((Math.abs(rVal) / maxRecentAbs) * 84));
               const isMissed = t.result === 'Missed';
               const isWin = !isMissed && (t.result === 'Win' || rVal > 0);
               const isLoss = !isMissed && (t.result === 'Loss' || rVal < 0);
@@ -686,19 +647,19 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = React.memo(({
                   title={`${t.pair} · ${t.result} · ${formattedVal}`}
                   className="flex-1 min-w-[46px] flex flex-col items-center gap-1.5 group"
                 >
-                  <span className={`font-mono text-[10px] font-bold tabular-nums ${textColor}`}>
+                  <span className={`font-mono text-[10px] font-semibold tabular-nums ${textColor}`}>
                     {formattedVal}
                   </span>
-                  <div className="h-[92px] flex items-end">
+                  <div className="h-[90px] flex items-end">
                     <div
-                      className={`w-6 sm:w-7 rounded-t-lg transition-opacity group-hover:opacity-80 ${barColor}`}
+                      className={`w-6 sm:w-7 rounded-t-md transition-opacity group-hover:opacity-80 ${barColor}`}
                       style={{ height: `${heightPx}px` }}
                     />
                   </div>
-                  <span className="text-[10px] font-semibold text-[#cfd9ea] truncate max-w-[56px]">
+                  <span className="text-[10px] font-semibold text-[#dce5f4] truncate max-w-[56px]">
                     {t.pair}
                   </span>
-                  <span className="font-mono text-[9px] text-[#6d7f99] tabular-nums">
+                  <span className="font-mono text-[9px] text-[#7f8fa8] tabular-nums">
                     {isMissed ? 'Missed' : formatDate(t.date, { day: 'numeric', month: 'short' })}
                   </span>
                 </button>

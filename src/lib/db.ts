@@ -8,19 +8,24 @@ import type {
   SessionAlarm,
   Trade,
   TradeScreenshot,
+  TradingJournal,
   TradingModel,
   UserProfile,
 } from '../types/journal';
 import { generateId } from './calculations';
+import { VALIDATION_LIMITS } from './validationConstants';
 
 const DB_NAME = 'msl_trading_journal_v10_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_KV = 'kv';
 const STORE_TRADES = 'trades';
 const STORE_IMAGES = 'images';
+const STORE_JOURNALS = 'journals';
 
 const LEGACY_KEY_V10 = 'msl_v10_state';
 const LEGACY_KEY_V91 = 'msl_v91_state';
+const ACTIVE_JOURNAL_KEY = 'activeJournalId';
+const ACTIVE_JOURNAL_LS_KEY = 'msl_active_journal_id_v1';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -47,6 +52,9 @@ function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE_IMAGES)) {
         const imgStore = db.createObjectStore(STORE_IMAGES, { keyPath: 'id' });
         imgStore.createIndex('tradeId', 'tradeId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORE_JOURNALS)) {
+        db.createObjectStore(STORE_JOURNALS, { keyPath: 'id' });
       }
     };
 
@@ -76,6 +84,53 @@ interface StoredImageRecord extends TradeScreenshot {
   tradeId: string;
 }
 
+function normalizeJournal(raw: Partial<TradingJournal>): TradingJournal {
+  const now = new Date().toISOString();
+  const currency =
+    typeof raw.currency === 'string' && raw.currency.trim()
+      ? raw.currency.trim().slice(0, VALIDATION_LIMITS.currencyMaxLength)
+      : 'R';
+  const isR = currency.toUpperCase() === 'R';
+  const numBalance = Number(raw.startingBalance);
+  const startingBalance = isR
+    ? 0
+    : Number.isFinite(numBalance)
+    ? Math.min(
+        VALIDATION_LIMITS.journalBalanceMax,
+        Math.max(VALIDATION_LIMITS.journalMonetaryBalanceMin, Math.round(numBalance * 100) / 100)
+      )
+    : 10000;
+  const numTarget = Number(raw.target);
+  const target =
+    Number.isFinite(numTarget) && numTarget > 0
+      ? Math.min(VALIDATION_LIMITS.journalTargetMax, Math.round(numTarget * 100) / 100)
+      : 0;
+
+  return {
+    id: String(raw.id || '').trim() || generateId(),
+    name:
+      String(raw.name || 'Trading Journal')
+        .trim()
+        .slice(0, VALIDATION_LIMITS.journalNameMaxLength) || 'Trading Journal',
+    startingBalance,
+    target,
+    currency,
+    propFirm: String(raw.propFirm || '')
+      .trim()
+      .slice(0, VALIDATION_LIMITS.journalPropFirmMaxLength),
+    description: String(raw.description || '')
+      .trim()
+      .slice(0, VALIDATION_LIMITS.journalDescriptionMaxLength),
+    isDeleted: Boolean(raw.isDeleted),
+    deletedAt:
+      typeof raw.deletedAt === 'string' && raw.deletedAt.trim()
+        ? raw.deletedAt.trim().slice(0, VALIDATION_LIMITS.journalDeletedAtMaxLength)
+        : undefined,
+    createdAt: typeof raw.createdAt === 'string' && raw.createdAt ? raw.createdAt : now,
+    updatedAt: typeof raw.updatedAt === 'string' && raw.updatedAt ? raw.updatedAt : now,
+  };
+}
+
 function normalizeTrade(raw: Partial<Trade> & { id?: string }): Trade {
   const images: TradeScreenshot[] = Array.isArray(raw.images)
     ? raw.images
@@ -100,6 +155,10 @@ function normalizeTrade(raw: Partial<Trade> & { id?: string }): Trade {
 
   return {
     id: raw.id || generateId(),
+    journalId:
+      typeof raw.journalId === 'string' && raw.journalId.trim()
+        ? raw.journalId.trim().slice(0, VALIDATION_LIMITS.idMaxLength)
+        : undefined,
     date: raw.date || new Date().toISOString().slice(0, 16),
     pair: String(raw.pair || '').trim().toUpperCase(),
     direction: raw.direction === 'Short' ? 'Short' : 'Long',
@@ -120,7 +179,7 @@ function normalizeTrade(raw: Partial<Trade> & { id?: string }): Trade {
     riskUnit: (['r', 'percent', 'money', 'value'].includes(String(raw.riskUnit))
       ? raw.riskUnit
       : 'r') as Trade['riskUnit'],
-    currency: typeof raw.currency === 'string' && raw.currency.trim() ? raw.currency.trim().slice(0, 8) : '$',
+    currency: typeof raw.currency === 'string' && raw.currency.trim() ? raw.currency.trim().slice(0, 8) : 'R',
     model: String(raw.model || ''),
     tags: Array.isArray(raw.tags)
       ? Array.from(
@@ -150,11 +209,105 @@ function sanitizeChecksMap(raw: unknown): Record<string, boolean> {
   return next;
 }
 
+export function resolveActiveJournalId(
+  journals: TradingJournal[],
+  preferredId?: string | null
+): string | null {
+  const active = journals.filter((j) => !j.isDeleted);
+  if (active.length === 0) return null;
+  if (preferredId && active.some((j) => j.id === preferredId)) {
+    return preferredId;
+  }
+  return active[0].id;
+}
+
+export function applyLegacyJournalMigration(state: JournalState): {
+  state: JournalState;
+  changed: boolean;
+} {
+  let changed = false;
+  const journals = (Array.isArray(state.journals) ? [...state.journals] : []).map((j) => {
+    if (
+      j.id === 'main-journal' &&
+      j.description === 'Migrated primary trading journal' &&
+      j.startingBalance === 10000 &&
+      j.currency === '$' &&
+      !j.target
+    ) {
+      changed = true;
+      return {
+        ...j,
+        startingBalance: 0,
+        target: 0,
+        currency: 'R',
+        description: 'Primary R-multiple trading journal',
+      };
+    }
+    return j;
+  });
+
+  const activeJournals = journals.filter((j) => !j.isDeleted);
+  const orphanTrades = state.trades.filter((t) => !t.journalId);
+
+  if (orphanTrades.length === 0) {
+    const resolvedId = resolveActiveJournalId(journals, state.activeJournalId);
+    if (resolvedId !== (state.activeJournalId ?? null) || changed) {
+      return {
+        state: { ...state, journals, activeJournalId: resolvedId },
+        changed: true,
+      };
+    }
+    return { state: { ...state, journals, activeJournalId: resolvedId }, changed: false };
+  }
+
+  let targetJournalId = activeJournals[0]?.id;
+  if (!targetJournalId) {
+    const now = new Date().toISOString();
+    const migratedJournal: TradingJournal = {
+      id: 'main-journal',
+      name: 'Main Trading Journal',
+      startingBalance: 0,
+      target: 0,
+      currency: 'R',
+      propFirm: '',
+      description: 'Primary R-multiple trading journal',
+      isDeleted: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    journals.unshift(migratedJournal);
+    targetJournalId = migratedJournal.id;
+  }
+
+  const migratedTrades = state.trades.map((t) =>
+    t.journalId ? t : { ...t, journalId: targetJournalId }
+  );
+
+  return {
+    state: {
+      ...state,
+      journals,
+      activeJournalId: resolveActiveJournalId(journals, state.activeJournalId || targetJournalId),
+      trades: migratedTrades,
+    },
+    changed: true,
+  };
+}
+
 function normalizeState(raw: Partial<JournalState> | null | undefined): JournalState {
   const base = createDefaultState();
   if (!raw || typeof raw !== 'object') return base;
 
-  return {
+  const journals = Array.isArray(raw.journals)
+    ? raw.journals.map((j) => normalizeJournal(j))
+    : [];
+
+  const normalized: JournalState = {
+    journals,
+    activeJournalId:
+      typeof raw.activeJournalId === 'string' && raw.activeJournalId.trim()
+        ? raw.activeJournalId.trim()
+        : null,
     trades: Array.isArray(raw.trades) ? raw.trades.map((t) => normalizeTrade(t)) : [],
     models: Array.isArray(raw.models) ? raw.models : [],
     fields: Array.isArray(raw.fields)
@@ -194,9 +347,16 @@ function normalizeState(raw: Partial<JournalState> | null | undefined): JournalS
       currency:
         typeof raw.settings?.currency === 'string' && raw.settings.currency.trim()
           ? raw.settings.currency.trim().slice(0, 8)
-          : '$',
+          : 'R',
+      glassTheme: (['midnight-glass', 'frost-blue', 'obsidian-gold'].includes(
+        String(raw.settings?.glassTheme)
+      )
+        ? raw.settings?.glassTheme
+        : 'midnight-glass') as JournalSettings['glassTheme'],
     },
   };
+
+  return applyLegacyJournalMigration(normalized).state;
 }
 
 function tryMigrateFromLocalStorage(): JournalState | null {
@@ -228,19 +388,20 @@ function tryMigrateFromLocalStorage(): JournalState | null {
 
 export async function loadJournalState(uid?: string | null): Promise<JournalState> {
   const db = await openDB();
-  const tx = db.transaction([STORE_KV, STORE_TRADES, STORE_IMAGES], 'readonly');
+  const tx = db.transaction([STORE_KV, STORE_TRADES, STORE_IMAGES, STORE_JOURNALS], 'readonly');
 
-  const [kvAll, rawTrades, rawImages] = await Promise.all([
+  const [kvAll, rawTrades, rawImages, rawJournals] = await Promise.all([
     idbReq<{ key: string; value: unknown }[]>(tx.objectStore(STORE_KV).getAll()),
     idbReq<Omit<Trade, 'images'>[]>(tx.objectStore(STORE_TRADES).getAll()),
     idbReq<StoredImageRecord[]>(tx.objectStore(STORE_IMAGES).getAll()),
+    idbReq<TradingJournal[]>(tx.objectStore(STORE_JOURNALS).getAll()),
   ]);
   await txDone(tx);
 
   const kvMap = new Map<string, unknown>(kvAll.map((item) => [item.key, item.value]));
 
   // First-run check: if IndexedDB is empty, check legacy localStorage
-  if (kvMap.size === 0 && rawTrades.length === 0) {
+  if (kvMap.size === 0 && rawTrades.length === 0 && rawJournals.length === 0) {
     const legacy = tryMigrateFromLocalStorage();
     if (legacy) {
       await saveFullJournalState(legacy, uid);
@@ -276,7 +437,15 @@ export async function loadJournalState(uid?: string | null): Promise<JournalStat
     (kvMap.get(PLAYBOOK_CHECKS_KEY) as Record<string, boolean> | undefined) ??
     readPlaybookChecksFromLocalStorage(uid);
 
-  return normalizeState({
+  const activeJournalKvKey = getActiveJournalKvKey(uid);
+  const storedActiveJournalId =
+    (kvMap.get(activeJournalKvKey) as string | null | undefined) ??
+    (kvMap.get(ACTIVE_JOURNAL_KEY) as string | null | undefined) ??
+    readActiveJournalIdFromLocalStorage(uid);
+
+  const preMigration = normalizeState({
+    journals: rawJournals,
+    activeJournalId: storedActiveJournalId,
     trades,
     models: (kvMap.get('models') as TradingModel[]) || [],
     fields: (kvMap.get('fields') as CustomField[]) || DEFAULT_FIELDS,
@@ -287,17 +456,89 @@ export async function loadJournalState(uid?: string | null): Promise<JournalStat
     settings: (kvMap.get('settings') as JournalSettings) || {
       quoteFrequency: 60,
       quoteNotifications: false,
+      glassTheme: 'midnight-glass',
     },
   });
+
+  // Persist if an upgrade attached legacy unlinked trades to a migrated default journal
+  if (rawTrades.some((t) => !t.journalId) && preMigration.journals.length > rawJournals.length) {
+    await saveFullJournalState(preMigration, uid);
+  }
+
+  return preMigration;
 }
 
-export async function saveKV<K extends keyof Omit<JournalState, 'trades'>>(
-  key: K,
-  value: JournalState[K]
-): Promise<void> {
+export async function saveKV<
+  K extends keyof Omit<JournalState, 'trades' | 'journals' | 'activeJournalId'>
+>(key: K, value: JournalState[K]): Promise<void> {
   const db = await openDB();
   const tx = db.transaction(STORE_KV, 'readwrite');
   tx.objectStore(STORE_KV).put({ key, value });
+  await txDone(tx);
+}
+
+function getActiveJournalKvKey(uid?: string | null): string {
+  return `${ACTIVE_JOURNAL_KEY}::${getChecksUserScope(uid)}`;
+}
+
+function getActiveJournalLsKey(uid?: string | null): string {
+  return `${ACTIVE_JOURNAL_LS_KEY}_${getChecksUserScope(uid)}`;
+}
+
+function readActiveJournalIdFromLocalStorage(uid?: string | null): string | null {
+  try {
+    const val = localStorage.getItem(getActiveJournalLsKey(uid));
+    return val && val.trim() ? val.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function loadActiveJournalId(uid?: string | null): Promise<string | null> {
+  const kvKey = getActiveJournalKvKey(uid);
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_KV, 'readonly');
+    const row = await idbReq<{ key: string; value: unknown } | undefined>(
+      tx.objectStore(STORE_KV).get(kvKey)
+    );
+    await txDone(tx);
+    if (typeof row?.value === 'string' && row.value.trim()) {
+      return row.value.trim();
+    }
+  } catch {
+    // Fallback to localStorage
+  }
+  return readActiveJournalIdFromLocalStorage(uid);
+}
+
+export async function saveActiveJournalId(
+  journalId: string | null,
+  uid?: string | null
+): Promise<void> {
+  try {
+    if (journalId) {
+      localStorage.setItem(getActiveJournalLsKey(uid), journalId);
+    } else {
+      localStorage.removeItem(getActiveJournalLsKey(uid));
+    }
+  } catch {
+    // Ignore quota errors
+  }
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_KV, 'readwrite');
+    tx.objectStore(STORE_KV).put({ key: getActiveJournalKvKey(uid), value: journalId });
+    await txDone(tx);
+  } catch {
+    // Ignore IDB errors
+  }
+}
+
+export async function saveJournalRecord(journal: TradingJournal): Promise<void> {
+  const db = await openDB();
+  const tx = db.transaction(STORE_JOURNALS, 'readwrite');
+  tx.objectStore(STORE_JOURNALS).put(normalizeJournal(journal));
   await txDone(tx);
 }
 
@@ -427,23 +668,30 @@ export async function saveFullJournalState(
   uid?: string | null
 ): Promise<void> {
   const db = await openDB();
-  const tx = db.transaction([STORE_KV, STORE_TRADES, STORE_IMAGES], 'readwrite');
+  const tx = db.transaction(
+    [STORE_KV, STORE_TRADES, STORE_IMAGES, STORE_JOURNALS],
+    'readwrite'
+  );
 
   const kvStore = tx.objectStore(STORE_KV);
   const tradeStore = tx.objectStore(STORE_TRADES);
   const imageStore = tx.objectStore(STORE_IMAGES);
+  const journalStore = tx.objectStore(STORE_JOURNALS);
 
-  // Preserve per-user playbookChecks entries when refreshing journal state
+  // Preserve per-user playbookChecks and activeJournalId entries when refreshing journal state
   const existingKv = await idbReq<{ key: string; value: unknown }[]>(kvStore.getAll());
-  const preservedChecks = existingKv.filter((row) =>
-    String(row.key).startsWith(`${PLAYBOOK_CHECKS_KEY}::`)
+  const preservedEntries = existingKv.filter(
+    (row) =>
+      String(row.key).startsWith(`${PLAYBOOK_CHECKS_KEY}::`) ||
+      String(row.key).startsWith(`${ACTIVE_JOURNAL_KEY}::`)
   );
 
   kvStore.clear();
   tradeStore.clear();
   imageStore.clear();
+  journalStore.clear();
 
-  for (const row of preservedChecks) {
+  for (const row of preservedEntries) {
     kvStore.put(row);
   }
 
@@ -454,6 +702,19 @@ export async function saveFullJournalState(
   kvStore.put({ key: 'profile', value: state.profile });
   kvStore.put({ key: 'settings', value: state.settings });
 
+  if (state.activeJournalId !== undefined) {
+    kvStore.put({ key: getActiveJournalKvKey(uid), value: state.activeJournalId });
+    try {
+      if (state.activeJournalId) {
+        localStorage.setItem(getActiveJournalLsKey(uid), state.activeJournalId);
+      } else {
+        localStorage.removeItem(getActiveJournalLsKey(uid));
+      }
+    } catch {
+      // Ignore quota errors
+    }
+  }
+
   if (state.playbookChecks !== undefined) {
     const cleanChecks = sanitizeChecksMap(state.playbookChecks);
     kvStore.put({ key: getPlaybookChecksKvKey(uid), value: cleanChecks });
@@ -462,6 +723,10 @@ export async function saveFullJournalState(
     } catch {
       // Ignore storage quota errors
     }
+  }
+
+  for (const j of state.journals || []) {
+    journalStore.put(normalizeJournal(j));
   }
 
   for (const trade of state.trades) {

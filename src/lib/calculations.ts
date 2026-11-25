@@ -1,4 +1,11 @@
-import type { JournalStats, MetricUnit, Trade, UnitStatsBreakdown } from '../types/journal';
+import type {
+  JournalSettings,
+  JournalStats,
+  MetricUnit,
+  Trade,
+  TradingJournal,
+  UnitStatsBreakdown,
+} from '../types/journal';
 
 export function generateId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -43,12 +50,23 @@ export function normalizeMetricUnit(raw: unknown, fallback: MetricUnit = 'r'): M
   return fallback;
 }
 
-export function getUnitShortLabel(unit: MetricUnit = 'r', currency: string = '$'): string {
+export function isRCurrency(currency?: string | null): boolean {
+  return String(currency || 'R').trim().toUpperCase() === 'R';
+}
+
+export function isRJournal(journal?: Pick<TradingJournal, 'currency' | 'startingBalance'> | null): boolean {
+  if (!journal) return false;
+  return isRCurrency(journal.currency) && Number(journal.startingBalance || 0) <= 0;
+}
+
+export function getUnitShortLabel(unit: MetricUnit = 'r', currency: string = 'R'): string {
   switch (unit) {
     case 'percent':
       return '%';
-    case 'money':
-      return (currency || '$').trim() || '$';
+    case 'money': {
+      const clean = (currency || 'R').trim() || 'R';
+      return clean.toUpperCase() === 'R' ? 'R' : clean;
+    }
     case 'value':
       return 'Val';
     case 'r':
@@ -57,12 +75,14 @@ export function getUnitShortLabel(unit: MetricUnit = 'r', currency: string = '$'
   }
 }
 
-export function getUnitLongLabel(unit: MetricUnit = 'r', currency: string = '$'): string {
+export function getUnitLongLabel(unit: MetricUnit = 'r', currency: string = 'R'): string {
   switch (unit) {
     case 'percent':
       return 'Percentage (%)';
-    case 'money':
-      return `Money (${(currency || '$').trim() || '$'})`;
+    case 'money': {
+      const clean = (currency || 'R').trim() || 'R';
+      return clean.toUpperCase() === 'R' ? 'Default (R · Risk/Reward)' : `Money (${clean})`;
+    }
     case 'value':
       return 'Value / Points';
     case 'r':
@@ -74,7 +94,7 @@ export function getUnitLongLabel(unit: MetricUnit = 'r', currency: string = '$')
 export function formatMetric(
   value: number | undefined | null,
   unit: MetricUnit = 'r',
-  currency: string = '$',
+  currency: string = 'R',
   opts?: { signed?: boolean; decimals?: number }
 ): string {
   const raw = Number(value || 0);
@@ -83,13 +103,16 @@ export function formatMetric(
   const decimals = opts?.decimals ?? 2;
   const sign = signed && num > 0 ? '+' : num < 0 ? '-' : '';
   const abs = Math.abs(num);
-  const curr = (currency || '$').trim() || '$';
+  const curr = (currency || 'R').trim() || 'R';
 
   if (unit === 'money') {
     const formatted = abs.toLocaleString(undefined, {
       minimumFractionDigits: decimals,
       maximumFractionDigits: decimals,
     });
+    if (curr.toUpperCase() === 'R') {
+      return `${sign}${formatted}R`;
+    }
     return `${sign}${curr}${formatted}`;
   }
 
@@ -166,7 +189,7 @@ export function calculateStats(
   const losses = executed.filter((t) => t.result === 'Loss');
   const breakevens = executed.filter((t) => t.result === 'BE');
 
-  const defaultCurrency = (options?.defaultCurrency || '$').trim() || '$';
+  const defaultCurrency = (options?.defaultCurrency || 'R').trim() || 'R';
   const defaultUnit = options?.defaultUnit || 'r';
 
   // Group executed trades by pnlUnit to keep numeric rollups mathematically pure
@@ -715,3 +738,145 @@ export function calculateMonthlyPnL(
     };
   });
 }
+
+export type JournalAccountStatus =
+  | 'Target Reached'
+  | 'In Profit'
+  | 'In Drawdown'
+  | 'Breakeven'
+  | 'Active';
+
+export interface JournalSummary {
+  journal: TradingJournal;
+  isRMode: boolean;
+  hasStartingBalance: boolean;
+  tradesCount: number;
+  executedCount: number;
+  missedCount: number;
+  winRate: number | null;
+  currentEquity: number;
+  netMoneyDelta: number;
+  hasMonetaryDelta: boolean;
+  returnPct: number;
+  target: number;
+  targetEquity: number | null;
+  currentTargetValue: number;
+  targetProgressPct: number | null;
+  remainingToTarget: number | null;
+  targetHit: boolean;
+  statusLabel: JournalAccountStatus;
+  nativeNetPnL: number;
+  nativeUnit: MetricUnit;
+  currency: string;
+  performanceTone: 'positive' | 'negative' | 'neutral';
+  stats: JournalStats;
+}
+
+export function calculateJournalSummary(
+  journal: TradingJournal,
+  allTrades: Trade[],
+  settings?: JournalSettings
+): JournalSummary {
+  const currency = (journal.currency || settings?.currency || 'R').trim() || 'R';
+  const isRMode = isRCurrency(currency) && Number(journal.startingBalance || 0) <= 0;
+  const hasStartingBalance = !isRMode && Number(journal.startingBalance || 0) > 0;
+  const journalTrades = allTrades.filter((t) => t.journalId === journal.id);
+  const stats = calculateStats(journalTrades, {
+    defaultUnit: isRMode ? 'r' : settings?.defaultPnlUnit,
+    defaultCurrency: currency,
+  });
+
+  let netMoneyDelta = 0;
+  let hasMonetaryDelta = false;
+
+  if (!isRMode) {
+    for (const t of journalTrades) {
+      if (t.result === 'Missed') continue;
+      const val = Number(t.r || 0);
+      const pUnit = normalizeMetricUnit(t.pnlUnit, 'r');
+      const rUnit = normalizeMetricUnit(t.riskUnit, 'r');
+
+      if (pUnit === 'money') {
+        netMoneyDelta += val;
+        hasMonetaryDelta = true;
+      } else if (pUnit === 'percent') {
+        netMoneyDelta += journal.startingBalance * (val / 100);
+        hasMonetaryDelta = true;
+      } else if (pUnit === 'r' && rUnit === 'money' && Number(t.risk || 0) > 0) {
+        netMoneyDelta += val * Number(t.risk || 0);
+        hasMonetaryDelta = true;
+      } else if (pUnit === 'r' && rUnit === 'percent' && Number(t.risk || 0) > 0) {
+        netMoneyDelta += journal.startingBalance * (Number(t.risk || 0) / 100) * val;
+        hasMonetaryDelta = true;
+      }
+    }
+  }
+
+  const roundedDelta = Math.round(netMoneyDelta * 100) / 100;
+  const currentEquity = hasStartingBalance
+    ? Math.round((journal.startingBalance + roundedDelta) * 100) / 100
+    : 0;
+  const returnPct =
+    hasStartingBalance && journal.startingBalance > 0
+      ? (roundedDelta / journal.startingBalance) * 100
+      : 0;
+
+  const toneSignal = !isRMode && hasMonetaryDelta ? roundedDelta : stats.netR;
+  const performanceTone: JournalSummary['performanceTone'] =
+    toneSignal > 0 ? 'positive' : toneSignal < 0 ? 'negative' : 'neutral';
+
+  const target = Math.max(0, Math.round(Number(journal.target || 0) * 100) / 100);
+  const currentTargetValue = isRMode
+    ? Math.round(stats.netR * 100) / 100
+    : hasMonetaryDelta
+    ? roundedDelta
+    : 0;
+  const targetHit = target > 0 && currentTargetValue >= target;
+  const targetProgressPct =
+    target > 0
+      ? Math.max(0, Math.min(100, Math.round((currentTargetValue / target) * 1000) / 10))
+      : null;
+  const remainingToTarget =
+    target > 0 ? Math.max(0, Math.round((target - currentTargetValue) * 100) / 100) : null;
+  const targetEquity =
+    hasStartingBalance && target > 0
+      ? Math.round((journal.startingBalance + target) * 100) / 100
+      : null;
+
+  const statusLabel: JournalAccountStatus = targetHit
+    ? 'Target Reached'
+    : performanceTone === 'positive'
+    ? 'In Profit'
+    : performanceTone === 'negative'
+    ? 'In Drawdown'
+    : stats.totalTrades > 0
+    ? 'Breakeven'
+    : 'Active';
+
+  return {
+    journal,
+    isRMode,
+    hasStartingBalance,
+    tradesCount: journalTrades.length,
+    executedCount: stats.totalTrades,
+    missedCount: stats.missed.length,
+    winRate: stats.totalTrades > 0 ? stats.winRate : null,
+    currentEquity,
+    netMoneyDelta: roundedDelta,
+    hasMonetaryDelta,
+    returnPct,
+    target,
+    targetEquity,
+    currentTargetValue,
+    targetProgressPct,
+    remainingToTarget,
+    targetHit,
+    statusLabel,
+    nativeNetPnL: stats.netR,
+    nativeUnit: isRMode ? 'r' : stats.primaryUnit,
+    currency,
+    performanceTone,
+    stats,
+  };
+}
+

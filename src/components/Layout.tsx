@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   BarChart3,
+  BookMarked,
   BookOpen,
   Bot,
   CalendarDays,
+  Check,
+  ChevronDown,
   Cloud,
   CloudOff,
   Layers,
@@ -12,16 +15,18 @@ import {
   LogOut,
   Menu,
   Plus,
+  Quote,
   RefreshCw,
   ScrollText,
   Settings,
-  Sparkles,
+  Wallet,
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useFirebase } from '../context/FirebaseContext';
 import { prewarmAIConnection } from '../lib/aiClient';
-import type { PageId } from '../types/journal';
+import { formatMetric, isRCurrency, type JournalSummary } from '../lib/calculations';
+import type { PageId, TradingJournal } from '../types/journal';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface LayoutProps {
@@ -32,57 +37,33 @@ interface LayoutProps {
   onSignIn: () => void;
   onSignOut: () => void;
   displayName?: string;
+  journals: TradingJournal[];
+  activeJournal: TradingJournal | null;
+  journalSummaries?: Map<string, JournalSummary>;
+  onSelectJournal: (journalId: string) => void;
+  onCreateJournal: () => void;
   children: React.ReactNode;
 }
 
-const PAGE_META: Record<PageId, { label: string; headline: string }> = {
-  dashboard: {
-    label: 'Overview',
-    headline: 'Good trading starts with a clear plan.',
-  },
-  journal: {
-    label: 'Trade journal',
-    headline: 'Every execution tells a story.',
-  },
-  calendar: {
-    label: 'Calendar',
-    headline: 'Build consistency, one day at a time.',
-  },
-  models: {
-    label: 'Models & fields',
-    headline: 'Define your framework. Customize your data.',
-  },
-  analytics: {
-    label: 'Analytics',
-    headline: 'Review the evidence behind your edge.',
-  },
-  playbook: {
-    label: 'Playbook',
-    headline: 'Your rules before the market moves.',
-  },
-  ai: {
-    label: 'KAIROS',
-    headline: 'Think clearly. Audit your edge.',
-  },
-  settings: {
-    label: 'Settings',
-    headline: 'Make this workspace work for you.',
-  },
-};
-
-const ALL_NAV_ITEMS: { id: PageId; label: string; shortLabel: string; icon: React.ComponentType<{ className?: string }> }[] = [
+const NAV_ITEMS: {
+  id: PageId;
+  label: string;
+  shortLabel: string;
+  icon: React.ComponentType<{ className?: string }>;
+}[] = [
   { id: 'dashboard', label: 'Overview', shortLabel: 'Overview', icon: LayoutDashboard },
-  { id: 'journal', label: 'Trade journal', shortLabel: 'Journal', icon: ScrollText },
+  { id: 'journals', label: 'Accounts', shortLabel: 'Accounts', icon: Wallet },
+  { id: 'journal', label: 'Journal', shortLabel: 'Journal', icon: ScrollText },
   { id: 'calendar', label: 'Calendar', shortLabel: 'Calendar', icon: CalendarDays },
-  { id: 'ai', label: 'KAIROS', shortLabel: 'KAIROS', icon: Bot },
-  { id: 'analytics', label: 'Analytics', shortLabel: 'Analytics', icon: BarChart3 },
   { id: 'models', label: 'Models & fields', shortLabel: 'Models', icon: Layers },
+  { id: 'analytics', label: 'Analytics', shortLabel: 'Analytics', icon: BarChart3 },
   { id: 'playbook', label: 'Playbook', shortLabel: 'Playbook', icon: BookOpen },
+  { id: 'ai', label: 'KAIROS', shortLabel: 'KAIROS', icon: Bot },
   { id: 'settings', label: 'Settings', shortLabel: 'Settings', icon: Settings },
 ];
 
-const MOBILE_PRIMARY_TABS: PageId[] = ['dashboard', 'journal', 'calendar', 'ai'];
-const MOBILE_DRAWER_TABS: PageId[] = ['analytics', 'models', 'playbook', 'settings'];
+const MOBILE_PRIMARY_TABS: PageId[] = ['dashboard', 'journals', 'journal', 'ai'];
+const MOBILE_DRAWER_TABS: PageId[] = ['calendar', 'analytics', 'playbook', 'models', 'settings'];
 
 export const Layout: React.FC<LayoutProps> = ({
   activePage,
@@ -92,49 +73,330 @@ export const Layout: React.FC<LayoutProps> = ({
   onSignIn,
   onSignOut,
   displayName,
+  journals,
+  activeJournal,
+  journalSummaries,
+  onSelectJournal,
+  onCreateJournal,
   children,
 }) => {
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [journalMenuOpen, setJournalMenuOpen] = useState(false);
+  const journalMenuRef = useRef<HTMLDivElement | null>(null);
   const { user, authBusy, cloudStatus } = useFirebase();
-  const meta = PAGE_META[activePage];
   const isMoreActive = MOBILE_DRAWER_TABS.includes(activePage);
+
+  useEffect(() => {
+    if (!journalMenuOpen) return;
+    const onPointerDown = (e: MouseEvent | TouchEvent) => {
+      if (journalMenuRef.current && !journalMenuRef.current.contains(e.target as Node)) {
+        setJournalMenuOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setJournalMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('touchstart', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('touchstart', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [journalMenuOpen]);
 
   const handleSelectPage = (page: PageId) => {
     onNavigate(page);
-    setDrawerOpen(false);
+    setMoreOpen(false);
+    setJournalMenuOpen(false);
     if (window.scrollY > 0) {
       window.scrollTo({ top: 0, behavior: 'auto' });
     }
   };
 
   return (
-    <div className="min-h-dvh text-[#eef3fb]">
-      {/* Desktop Sidebar */}
-      <aside className="hidden lg:flex lg:fixed lg:inset-y-0 lg:left-0 lg:w-64 lg:flex-col glass-bar border-r border-white/[0.08] px-4 py-6 z-30">
-        <button
-          type="button"
-          onClick={() => handleSelectPage('dashboard')}
-          className="flex items-center gap-3 px-2 pb-7 text-left group"
-        >
-          <span className="h-10 w-10 shrink-0 rounded-xl border border-white/15 bg-gradient-to-br from-[#1d3e42]/80 to-[#0d1d2d]/80 backdrop-blur-md flex items-center justify-center font-display text-xs font-extrabold tracking-tight text-[#8df0c0] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
-            MSL
-          </span>
-          <span className="min-w-0">
-            <span className="block font-display text-sm font-extrabold tracking-tight text-[#eef3fb] whitespace-nowrap">
-              MSL Journal
-            </span>
-            <span className="block text-[11px] text-[#8b9ab0] truncate tabular-nums">
-              {displayName ? `${displayName} · Version 10.6.9` : 'Version 10.6.9'}
-            </span>
-          </span>
-        </button>
+    <div className="min-h-dvh flex flex-col text-[#eef3fb]">
+      {/* Sticky Top Navigation Header */}
+      <header className="sticky top-0 z-30 pt-safe glass-bar border-b border-white/[0.08]">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-3">
+          {/* Left: Brand */}
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              type="button"
+              onClick={() => handleSelectPage('dashboard')}
+              className="flex items-center gap-2.5 text-left min-w-0 group"
+            >
+              <span className="h-9 w-9 shrink-0 rounded-xl border border-white/20 bg-gradient-to-br from-[#235458]/95 to-[#0a1829]/95 flex items-center justify-center font-display text-xs font-extrabold tracking-tight text-[#8df0c0] shadow-[inset_0_1px_0_rgba(255,255,255,0.28)]">
+                MSL
+              </span>
+              <span className="min-w-0">
+                <span className="block font-display text-sm sm:text-base font-extrabold tracking-tight text-[#eef3fb] whitespace-nowrap">
+                  MSL Journal
+                </span>
+                <span className="block text-[10px] sm:text-[11px] font-medium text-[#7f8fa8] truncate tabular-nums">
+                  {displayName ? `${displayName} · Version 10.6.9` : 'Version 10.6.9'}
+                </span>
+              </span>
+            </button>
+          </div>
 
-        <div className="px-2.5 pb-2 text-xs font-medium text-[#7c8ca6]">
-          Workspace
+          {/* Center: Desktop Primary Navigation */}
+          <nav
+            aria-label="Primary navigation"
+            className="hidden xl:flex items-center gap-1 rounded-2xl bg-white/[0.035] border border-white/[0.08] p-1"
+          >
+            {NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              const active = activePage === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => handleSelectPage(item.id)}
+                  onMouseEnter={item.id === 'ai' ? prewarmAIConnection : undefined}
+                  onFocus={item.id === 'ai' ? prewarmAIConnection : undefined}
+                  className={`min-h-[36px] inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold transition whitespace-nowrap ${
+                    active
+                      ? 'bg-[#47dca0]/18 text-[#8df0c0] border border-[#47dca0]/35 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                      : 'text-[#9aa8be] hover:text-[#eef3fb] hover:bg-white/[0.05] border border-transparent'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span>{item.shortLabel}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Right: Quick Switch Journal, Sync, PWA, Quote, Log Trade */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Quick Switch Journal Dropdown */}
+            <div ref={journalMenuRef} className="relative">
+              {journals.length === 0 ? (
+                <button
+                  type="button"
+                  onClick={onCreateJournal}
+                  className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-[#111c2d] border border-[#47dca0]/40 px-3 py-1.5 text-xs font-semibold text-[#8df0c0] hover:bg-[#47dca0]/15 transition whitespace-nowrap"
+                >
+                  <BookMarked className="w-3.5 h-3.5 shrink-0" />
+                  <span>Create journal</span>
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setJournalMenuOpen((v) => !v)}
+                    aria-expanded={journalMenuOpen}
+                    aria-haspopup="listbox"
+                    aria-label="Switch active journal"
+                    className={`min-h-[40px] max-w-[148px] sm:max-w-[210px] inline-flex items-center gap-2 rounded-xl border px-2.5 sm:px-3 py-1.5 text-xs font-semibold transition ${
+                      journalMenuOpen
+                        ? 'bg-[#17263f] border-[#47dca0]/50 text-[#eef3fb]'
+                        : 'bg-[#111c2d] border-[#23344f] text-[#dce5f4] hover:border-[#47dca0]/45'
+                    }`}
+                  >
+                    <BookMarked className="w-3.5 h-3.5 text-[#47dca0] shrink-0" />
+                    <span className="truncate">{activeJournal?.name || 'Switch journal'}</span>
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 text-[#8b9ab0] shrink-0 transition-transform duration-150 ${
+                        journalMenuOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+
+                  <AnimatePresence>
+                    {journalMenuOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8, scale: 0.97 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 4, scale: 0.97 }}
+                        transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+                        role="listbox"
+                        aria-label="Trading journals"
+                        className="absolute right-0 mt-2 w-72 sm:w-80 rounded-2xl glass-modal p-2 z-50"
+                      >
+                        <div className="px-2.5 py-2 flex items-center justify-between border-b border-white/[0.08]">
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#8b9ab0]">
+                            Switch journal ({journals.length})
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setJournalMenuOpen(false);
+                              onCreateJournal();
+                            }}
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-[#8df0c0] hover:underline"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>New</span>
+                          </button>
+                        </div>
+
+                        <div className="mt-1.5 max-h-64 overflow-y-auto space-y-1">
+                          {journals.map((j) => {
+                            const isActive = j.id === activeJournal?.id;
+                            const summary = journalSummaries?.get(j.id);
+                            const curr = j.currency || 'R';
+                            const isRMode = summary
+                              ? summary.isRMode
+                              : isRCurrency(curr) && j.startingBalance <= 0;
+                            const equityVal = summary ? summary.currentEquity : j.startingBalance;
+                            return (
+                              <button
+                                key={j.id}
+                                type="button"
+                                role="option"
+                                aria-selected={isActive}
+                                onClick={() => {
+                                  onSelectJournal(j.id);
+                                  setJournalMenuOpen(false);
+                                }}
+                                className={`w-full min-h-[46px] flex items-center justify-between gap-2.5 rounded-xl px-3 py-2 text-left transition ${
+                                  isActive
+                                    ? 'bg-[#47dca0]/15 border border-[#47dca0]/40 text-[#eef3fb]'
+                                    : 'border border-transparent hover:bg-white/[0.06] text-[#cbd5e1]'
+                                }`}
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-xs font-bold truncate">{j.name}</span>
+                                    {j.propFirm && (
+                                      <span className="rounded-md bg-white/[0.07] px-1.5 py-0.5 text-[10px] font-medium text-[#9fb2ca] truncate shrink-0">
+                                        {j.propFirm}
+                                      </span>
+                                    )}
+                                    {summary && summary.target > 0 && (
+                                      <span
+                                        className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold shrink-0 tabular-nums ${
+                                          summary.targetHit
+                                            ? 'bg-[#47dca0]/20 text-[#8df0c0]'
+                                            : 'bg-[#8ebeff]/15 text-[#b9d6ff]'
+                                        }`}
+                                      >
+                                        {summary.targetHit
+                                          ? 'Target hit'
+                                          : `${Math.round(summary.targetProgressPct ?? 0)}%`}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="mt-0.5 font-mono text-[11px] text-[#8b9ab0] tabular-nums truncate">
+                                    {isRMode
+                                      ? `R-Mode · Net ${formatMetric(summary?.nativeNetPnL ?? 0, 'r', 'R')}`
+                                      : formatMetric(equityVal, 'money', curr, {
+                                          signed: false,
+                                          decimals: equityVal % 1 === 0 ? 0 : 2,
+                                        })}
+                                    {summary ? ` · ${summary.tradesCount} trades` : ''}
+                                  </p>
+                                </div>
+                                {isActive && (
+                                  <Check className="w-4 h-4 text-[#47dca0] shrink-0" />
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        <div className="mt-1.5 pt-1.5 border-t border-white/[0.08] grid grid-cols-2 gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setJournalMenuOpen(false);
+                              onCreateJournal();
+                            }}
+                            className="min-h-[38px] flex items-center justify-center gap-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] px-2.5 py-1.5 text-xs font-semibold text-[#8df0c0] transition"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>New journal</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSelectPage('journals')}
+                            className="min-h-[38px] flex items-center justify-center gap-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] px-2.5 py-1.5 text-xs font-semibold text-[#b9d6ff] transition"
+                          >
+                            <Wallet className="w-3.5 h-3.5" />
+                            <span>All accounts</span>
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </>
+              )}
+            </div>
+
+            {/* Desktop Cloud Sync & Auth */}
+            <div className="hidden md:flex items-center gap-1.5">
+              <PWAInstallButton variant="compact" />
+
+              <button
+                type="button"
+                onClick={onCycleQuote}
+                title="Next trading discipline quote"
+                aria-label="Next trading discipline quote"
+                className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl bg-[#111c2d] border border-[#23344f] text-[#8b9ab0] hover:text-[#8df0c0] hover:border-[#47dca0]/45 transition"
+              >
+                <Quote className="w-4 h-4" />
+              </button>
+
+              {user ? (
+                <button
+                  type="button"
+                  onClick={() => handleSelectPage('settings')}
+                  title={
+                    cloudStatus === 'connecting'
+                      ? 'Syncing Cloud Firestore…'
+                      : cloudStatus === 'error'
+                      ? 'Cloud sync issue'
+                      : `Synced (${user.email || 'Google Account'})`
+                  }
+                  className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-[#111c2d] border border-[#23344f] px-2.5 py-1.5 text-xs font-semibold text-[#eef3fb] hover:border-[#47dca0]/45 transition"
+                >
+                  {cloudStatus === 'connecting' ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#47dca0]" />
+                  ) : cloudStatus === 'error' ? (
+                    <CloudOff className="w-3.5 h-3.5 text-[#ff7d91]" />
+                  ) : (
+                    <Cloud className="w-3.5 h-3.5 text-[#47dca0]" />
+                  )}
+                  <span className="hidden lg:inline">
+                    {cloudStatus === 'connecting'
+                      ? 'Syncing'
+                      : cloudStatus === 'error'
+                      ? 'Offline'
+                      : 'Synced'}
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onSignIn}
+                  disabled={authBusy}
+                  className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-[#111c2d] border border-[#23344f] px-3 py-1.5 text-xs font-semibold text-[#eef3fb] hover:border-[#47dca0]/45 disabled:opacity-50 transition whitespace-nowrap"
+                >
+                  <LogIn className="w-3.5 h-3.5 text-[#47dca0]" />
+                  <span>{authBusy ? 'Signing in…' : 'Sign in'}</span>
+                </button>
+              )}
+            </div>
+
+            {/* Primary Log Trade Action */}
+            <button
+              type="button"
+              onClick={onOpenTradeModal}
+              className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-[#47dca0] px-3 sm:px-4 py-2 text-xs sm:text-sm font-bold text-[#051612] hover:bg-[#62e4b0] active:scale-[0.98] transition whitespace-nowrap"
+            >
+              <Plus className="w-4 h-4 stroke-[2.5]" />
+              <span className="hidden sm:inline">Log trade</span>
+              <span className="sm:hidden">Log</span>
+            </button>
+          </div>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto" aria-label="Primary navigation">
-          {ALL_NAV_ITEMS.map((item) => {
+        {/* Tablet Secondary Row Navigation (md–lg where full xl row doesn't fit) */}
+        <div className="hidden md:flex xl:hidden border-t border-white/[0.06] px-4 sm:px-6 py-1.5 overflow-x-auto gap-1.5 max-w-7xl mx-auto">
+          {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const active = activePage === item.id;
             return (
@@ -143,193 +405,33 @@ export const Layout: React.FC<LayoutProps> = ({
                 type="button"
                 onClick={() => handleSelectPage(item.id)}
                 onMouseEnter={item.id === 'ai' ? prewarmAIConnection : undefined}
-                onFocus={item.id === 'ai' ? prewarmAIConnection : undefined}
-                className={`w-full min-h-[44px] flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all whitespace-nowrap ${
+                className={`min-h-[34px] inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition whitespace-nowrap shrink-0 ${
                   active
-                    ? 'bg-white/[0.09] text-[#8df0c0] border border-white/[0.12] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
-                    : 'text-[#9aa8be] hover:bg-white/[0.05] hover:text-[#eef3fb] border border-transparent'
+                    ? 'bg-[#47dca0]/18 text-[#8df0c0] border border-[#47dca0]/35'
+                    : 'text-[#8b9ab0] hover:text-[#eef3fb] hover:bg-white/[0.05] border border-transparent'
                 }`}
               >
-                <Icon className={`w-4 h-4 shrink-0 ${active ? 'text-[#47dca0]' : 'text-[#6c7d96]'}`} />
-                <span className="truncate">{item.label}</span>
+                <Icon className="w-3.5 h-3.5 shrink-0" />
+                <span>{item.shortLabel}</span>
               </button>
             );
           })}
-        </nav>
-
-        <div className="mt-4 pt-4 border-t border-white/[0.08] space-y-3">
-          <PWAInstallButton variant="full" />
-          {user ? (
-            <div className="pt-3 border-t border-white/[0.08] flex items-center gap-2.5">
-              {user.photoURL ? (
-                <img
-                  src={user.photoURL}
-                  alt={user.displayName || 'Trader avatar'}
-                  referrerPolicy="no-referrer"
-                  className="h-8 w-8 rounded-lg object-cover border border-white/15 shrink-0"
-                />
-              ) : (
-                <div className="h-8 w-8 rounded-lg bg-[#47dca0]/20 border border-[#47dca0]/35 flex items-center justify-center text-xs font-bold text-[#8df0c0] shrink-0">
-                  {(user.displayName || user.email || 'T').slice(0, 1).toUpperCase()}
-                </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold text-[#eef3fb] truncate">
-                  {user.displayName || 'Google Account'}
-                </p>
-                <p className="flex items-center gap-1 text-[11px] text-[#8df0c0] truncate">
-                  {cloudStatus === 'connecting' ? (
-                    <>
-                      <RefreshCw className="w-3 h-3 animate-spin shrink-0" />
-                      <span>Syncing…</span>
-                    </>
-                  ) : cloudStatus === 'error' ? (
-                    <>
-                      <CloudOff className="w-3 h-3 text-[#ff7d91] shrink-0" />
-                      <span className="text-[#ff7d91]">Sync paused</span>
-                    </>
-                  ) : (
-                    <>
-                      <Cloud className="w-3 h-3 shrink-0" />
-                      <span>Cloud synced</span>
-                    </>
-                  )}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={onSignOut}
-                disabled={authBusy}
-                title="Sign out"
-                aria-label="Sign out"
-                className="h-9 w-9 flex items-center justify-center rounded-lg text-[#8b9ab0] hover:text-[#ff7d91] hover:bg-white/[0.06] transition shrink-0"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
-            </div>
-          ) : (
-            <div className="pt-3 border-t border-white/[0.08] space-y-2.5">
-              <div className="flex items-center gap-2 text-xs font-semibold text-[#c9d4e7]">
-                <CloudOff className="w-4 h-4 text-[#8ebeff] shrink-0" />
-                <span>Local device mode</span>
-              </div>
-              <p className="text-xs leading-relaxed text-[#7e8ea6]">
-                Sign in with Google to sync trades and screenshots privately across devices.
-              </p>
-              <button
-                type="button"
-                onClick={onSignIn}
-                disabled={authBusy}
-                className="w-full min-h-[40px] inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#47dca0]/15 border border-[#47dca0]/35 px-3 py-2 text-xs font-semibold text-[#8df0c0] hover:bg-[#47dca0]/25 disabled:opacity-50 transition"
-              >
-                <LogIn className="w-3.5 h-3.5" />
-                <span>{authBusy ? 'Connecting…' : 'Sign in with Google'}</span>
-              </button>
-            </div>
-          )}
         </div>
-      </aside>
+      </header>
 
-      {/* Main Content Shell */}
-      <div className="lg:pl-64 flex flex-col min-h-dvh">
-        {/* Compact Sticky Top Header (Mobile <= 52px + safe area; Desktop clean 3-zone) */}
-        <header className="sticky top-0 z-20 pt-safe glass-bar border-b border-white/[0.08]">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-13 sm:h-16 flex items-center justify-between gap-4">
-            <div className="min-w-0 flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => handleSelectPage('dashboard')}
-                className="lg:hidden h-8 w-8 shrink-0 rounded-lg border border-white/15 bg-gradient-to-br from-[#1d3e42]/80 to-[#0d1d2d]/80 flex items-center justify-center font-display text-[10px] font-extrabold text-[#8df0c0]"
-                aria-label="Go to Overview"
-              >
-                MSL
-              </button>
-              <div className="min-w-0">
-                <div className="hidden sm:flex items-center gap-1.5 text-xs text-[#7f8fa8]">
-                  <span>MSL Journal</span>
-                  <span aria-hidden="true">/</span>
-                  <span className="text-[#c5d1e4] font-medium">{meta.label}</span>
-                </div>
-                <h1 className="text-sm sm:text-lg font-bold tracking-tight text-[#eef3fb] truncate">
-                  <span className="sm:hidden">{meta.label}</span>
-                  <span className="hidden sm:inline">{meta.headline}</span>
-                </h1>
-              </div>
-            </div>
+      {/* Main Content Container */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 pt-5 sm:pt-7 pb-nav-safe md:pb-12">
+        {children}
+      </main>
 
-            <div className="flex items-center gap-2 shrink-0">
-              <div className="hidden sm:block">
-                <PWAInstallButton variant="compact" />
-              </div>
-              <button
-                type="button"
-                onClick={() => handleSelectPage('settings')}
-                title={
-                  user
-                    ? `Signed in as ${user.displayName || user.email || 'Trader'}`
-                    : 'Sign in for cloud sync'
-                }
-                aria-label={user ? 'Cloud sync status' : 'Sign in for cloud sync'}
-                className="min-h-[40px] flex items-center gap-1.5 rounded-xl glass-subcard px-2.5 py-1.5 text-xs font-semibold text-[#c9d4e7] hover:border-[#47dca0]/45 transition shrink-0"
-              >
-                {user ? (
-                  <>
-                    {user.photoURL ? (
-                      <img
-                        src={user.photoURL}
-                        alt={user.displayName || 'Trader'}
-                        referrerPolicy="no-referrer"
-                        className="h-5 w-5 rounded-md object-cover border border-white/15"
-                      />
-                    ) : (
-                      <Cloud className="w-4 h-4 text-[#47dca0]" />
-                    )}
-                    <span className="hidden md:inline text-[#8df0c0]">
-                      {cloudStatus === 'connecting' ? 'Syncing…' : 'Synced'}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <CloudOff className="w-4 h-4 text-[#8ebeff]" />
-                    <span className="hidden md:inline">Local</span>
-                  </>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={onCycleQuote}
-                title="Another motivational quote"
-                aria-label="Cycle motivational quote"
-                className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl glass-subcard text-[#8df0c0] hover:border-[#47dca0]/45 hover:bg-white/[0.08] transition"
-              >
-                <Sparkles className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={onOpenTradeModal}
-                className="min-h-[40px] flex items-center gap-1.5 rounded-xl bg-[#47dca0] px-3.5 sm:px-4 py-2 text-xs sm:text-sm font-bold text-[#051612] hover:bg-[#62e4b0] active:scale-[0.98] transition whitespace-nowrap shrink-0"
-              >
-                <Plus className="w-4 h-4 stroke-[2.5]" />
-                <span>Log trade</span>
-              </button>
-            </div>
-          </div>
-        </header>
-
-        {/* Page Viewport */}
-        <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-5 pb-nav-safe lg:pb-12">
-          {children}
-        </main>
-      </div>
-
-      {/* Mobile Fixed Bottom Navigation Bar (Natural Thumb Zone) */}
+      {/* Mobile Fixed Bottom Navigation Bar */}
       <nav
         aria-label="Mobile navigation"
-        className="lg:hidden fixed bottom-0 inset-x-0 z-30 glass-bar border-t border-white/[0.1] pb-safe"
+        className="md:hidden fixed bottom-0 inset-x-0 z-30 glass-bar border-t border-white/[0.08] pb-safe"
       >
-        <div className="grid grid-cols-5 h-14 max-w-lg mx-auto px-1">
+        <div className="grid grid-cols-5 h-16 max-w-lg mx-auto px-1">
           {MOBILE_PRIMARY_TABS.map((tabId) => {
-            const item = ALL_NAV_ITEMS.find((x) => x.id === tabId)!;
+            const item = NAV_ITEMS.find((x) => x.id === tabId)!;
             const Icon = item.icon;
             const active = activePage === tabId;
             return (
@@ -338,11 +440,11 @@ export const Layout: React.FC<LayoutProps> = ({
                 type="button"
                 onClick={() => handleSelectPage(tabId)}
                 onTouchStart={tabId === 'ai' ? prewarmAIConnection : undefined}
-                className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors ${
+                className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition ${
                   active ? 'text-[#8df0c0]' : 'text-[#7f8fa8] hover:text-[#eef3fb]'
                 }`}
               >
-                <Icon className={`w-5 h-5 ${active ? 'text-[#47dca0]' : ''}`} />
+                <Icon className="w-5 h-5" />
                 <span className="text-[10px] font-semibold tracking-tight whitespace-nowrap">
                   {item.shortLabel}
                 </span>
@@ -352,49 +454,49 @@ export const Layout: React.FC<LayoutProps> = ({
 
           <button
             type="button"
-            onClick={() => setDrawerOpen(true)}
-            aria-expanded={drawerOpen}
-            className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors ${
-              isMoreActive || drawerOpen ? 'text-[#8df0c0]' : 'text-[#7f8fa8] hover:text-[#eef3fb]'
+            onClick={() => setMoreOpen(true)}
+            aria-expanded={moreOpen}
+            className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition ${
+              isMoreActive || moreOpen ? 'text-[#8df0c0]' : 'text-[#7f8fa8] hover:text-[#eef3fb]'
             }`}
           >
-            <Menu className={`w-5 h-5 ${isMoreActive || drawerOpen ? 'text-[#47dca0]' : ''}`} />
+            <Menu className="w-5 h-5" />
             <span className="text-[10px] font-semibold tracking-tight whitespace-nowrap">More</span>
           </button>
         </div>
       </nav>
 
-      {/* Mobile "More" Bottom Sheet Drawer */}
+      {/* Mobile More Drawer */}
       <AnimatePresence>
-        {drawerOpen && (
+        {moreOpen && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
-            className="lg:hidden fixed inset-0 z-50 flex items-end bg-black/60 backdrop-blur-md"
-            onClick={() => setDrawerOpen(false)}
+            transition={{ duration: 0.16 }}
+            className="md:hidden fixed inset-0 z-50 flex items-end bg-black/60 backdrop-blur-sm"
+            onClick={() => setMoreOpen(false)}
           >
             <motion.div
               role="dialog"
               aria-modal="true"
-              aria-label="Workspace menu"
-              initial={{ y: 40, opacity: 0 }}
+              aria-label="More workspace tools"
+              initial={{ y: 36, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 32, opacity: 0 }}
-              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-              className="w-full rounded-t-3xl glass-modal px-5 pt-3 pb-safe"
+              exit={{ y: 28, opacity: 0 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="w-full max-h-[85dvh] overflow-y-auto rounded-t-3xl glass-modal px-5 pt-3 pb-safe"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-white/20" />
+              <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-white/15" />
               <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
                 <div>
-                  <p className="font-display text-sm font-bold text-[#eef3fb]">MSL Workspace</p>
-                  <p className="text-xs text-[#8b9ab0]">Read the market. Respect the plan.</p>
+                  <p className="font-display text-sm font-bold text-[#eef3fb]">Workspace menu</p>
+                  <p className="text-xs text-[#8b9ab0]">Calendar, analytics, playbook, models &amp; settings</p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setDrawerOpen(false)}
+                  onClick={() => setMoreOpen(false)}
                   aria-label="Close menu"
                   className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-[#8b9ab0] hover:text-[#eef3fb]"
                 >
@@ -404,7 +506,7 @@ export const Layout: React.FC<LayoutProps> = ({
 
               <div className="py-3 space-y-1.5">
                 {MOBILE_DRAWER_TABS.map((tabId) => {
-                  const item = ALL_NAV_ITEMS.find((x) => x.id === tabId)!;
+                  const item = NAV_ITEMS.find((x) => x.id === tabId)!;
                   const Icon = item.icon;
                   const active = activePage === tabId;
                   return (
@@ -412,38 +514,44 @@ export const Layout: React.FC<LayoutProps> = ({
                       key={tabId}
                       type="button"
                       onClick={() => handleSelectPage(tabId)}
-                      className={`w-full min-h-[48px] flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition ${
+                      className={`w-full min-h-[48px] flex items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
                         active
-                          ? 'bg-white/[0.1] text-[#8df0c0] border border-white/[0.14]'
-                          : 'glass-subcard text-[#d5dfef] hover:bg-white/[0.07]'
+                          ? 'bg-[#47dca0]/15 border border-[#47dca0]/40 text-[#8df0c0]'
+                          : 'bg-white/[0.03] border border-white/[0.08] text-[#dce5f4] hover:bg-white/[0.06]'
                       }`}
                     >
-                      <Icon className={`w-5 h-5 ${active ? 'text-[#47dca0]' : 'text-[#8b9ab0]'}`} />
+                      <Icon className="w-4 h-4 shrink-0" />
                       <span>{item.label}</span>
                     </button>
                   );
                 })}
               </div>
 
-              <div className="pt-2 pb-5 space-y-3">
+              <div className="py-3 border-t border-white/[0.08] space-y-2.5">
+                <PWAInstallButton variant="full" onInstalled={() => setMoreOpen(false)} />
+
                 {user ? (
                   <div className="rounded-xl glass-subcard p-3 flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-xs font-semibold text-[#eef3fb] truncate">
+                      <p className="text-xs font-bold text-[#eef3fb] truncate">
                         {user.displayName || user.email || 'Google Account'}
                       </p>
-                      <p className="text-[11px] text-[#8df0c0]">
-                        {cloudStatus === 'connecting' ? 'Syncing cloud vault…' : 'Cloud Firestore synced'}
+                      <p className="text-[11px] text-[#8b9ab0]">
+                        {cloudStatus === 'connecting'
+                          ? 'Syncing Cloud Firestore…'
+                          : cloudStatus === 'error'
+                          ? 'Cloud sync issue'
+                          : 'Cloud Firestore synced'}
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={() => {
-                        setDrawerOpen(false);
+                        setMoreOpen(false);
                         onSignOut();
                       }}
                       disabled={authBusy}
-                      className="min-h-[38px] inline-flex items-center gap-1.5 rounded-lg border border-white/[0.14] px-3 py-1.5 text-xs font-semibold text-[#c9d4e7]"
+                      className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl border border-[#ff7d91]/35 bg-[#ff7d91]/10 px-3 py-1.5 text-xs font-semibold text-[#ff7d91]"
                     >
                       <LogOut className="w-3.5 h-3.5" />
                       <span>Sign out</span>
@@ -453,17 +561,16 @@ export const Layout: React.FC<LayoutProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      setDrawerOpen(false);
+                      setMoreOpen(false);
                       onSignIn();
                     }}
                     disabled={authBusy}
-                    className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#47dca0]/15 border border-[#47dca0]/35 px-4 py-2.5 text-sm font-semibold text-[#8df0c0]"
+                    className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-white/[0.06] border border-white/[0.12] px-4 py-2.5 text-sm font-semibold text-[#eef3fb]"
                   >
-                    <LogIn className="w-4 h-4" />
-                    <span>{authBusy ? 'Connecting…' : 'Sign in with Google for Cloud Sync'}</span>
+                    <LogIn className="w-4 h-4 text-[#47dca0]" />
+                    <span>{authBusy ? 'Signing in…' : 'Sign in with Google'}</span>
                   </button>
                 )}
-                <PWAInstallButton variant="full" onInstalled={() => setDrawerOpen(false)} />
               </div>
             </motion.div>
           </motion.div>

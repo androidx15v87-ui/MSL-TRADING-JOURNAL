@@ -10,6 +10,7 @@ import {
   Lock,
   LogIn,
   LogOut,
+  Palette,
   RefreshCw,
   Save,
   ScanFace,
@@ -52,12 +53,35 @@ import {
   syncNativeAlarms,
 } from '../lib/notifications';
 import type {
+  GlassTheme,
   JournalSettings,
   JournalState,
   MetricUnit,
   SessionAlarm,
   UserProfile,
 } from '../types/journal';
+
+const GLASS_THEME_OPTIONS: {
+  id: GlassTheme;
+  label: string;
+  swatchClass: string;
+}[] = [
+  {
+    id: 'midnight-glass',
+    label: 'Midnight Glass',
+    swatchClass: 'from-[#0f1d38] via-[#27467a] to-[#47dca0]',
+  },
+  {
+    id: 'frost-blue',
+    label: 'Frost Blue',
+    swatchClass: 'from-[#163a70] via-[#4ea8ff] to-[#ccebff]',
+  },
+  {
+    id: 'obsidian-gold',
+    label: 'Obsidian Gold',
+    swatchClass: 'from-[#161218] via-[#b88936] to-[#f7dc94]',
+  },
+];
 
 interface SettingsScreenProps {
   alarms: SessionAlarm[];
@@ -96,7 +120,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [quoteNotifs, setQuoteNotifs] = useState<boolean>(settings.quoteNotifications);
   const [defaultPnlUnit, setDefaultPnlUnit] = useState<MetricUnit>(settings.defaultPnlUnit || 'r');
   const [defaultRiskUnit, setDefaultRiskUnit] = useState<MetricUnit>(settings.defaultRiskUnit || 'r');
-  const [currencySymbol, setCurrencySymbol] = useState<string>(settings.currency || '$');
+  const [currencySymbol, setCurrencySymbol] = useState<string>(settings.currency || 'R');
+  const [glassTheme, setGlassTheme] = useState<GlassTheme>(settings.glassTheme || 'midnight-glass');
 
   const [displayName, setDisplayName] = useState(profile.name);
   const [defaultMarket, setDefaultMarket] = useState(profile.market);
@@ -133,7 +158,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     setQuoteNotifs(settings.quoteNotifications);
     setDefaultPnlUnit(settings.defaultPnlUnit || 'r');
     setDefaultRiskUnit(settings.defaultRiskUnit || 'r');
-    setCurrencySymbol(settings.currency || '$');
+    setCurrencySymbol(settings.currency || 'R');
+    setGlassTheme(settings.glassTheme || 'midnight-glass');
   }, [settings]);
 
   useEffect(() => {
@@ -157,13 +183,35 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   const nativeAndroid = hasAndroidNativeAlarms();
 
+  const handleSelectTheme = async (nextTheme: GlassTheme) => {
+    setGlassTheme(nextTheme);
+    document.documentElement.dataset.glassTheme = nextTheme;
+    try {
+      localStorage.setItem('msl_v10_glass_theme', nextTheme);
+    } catch {
+      // Ignore storage failures
+    }
+    const nextSettings: JournalSettings = {
+      quoteFrequency: quoteFreq,
+      quoteNotifications: quoteNotifs,
+      defaultPnlUnit,
+      defaultRiskUnit,
+      currency: currencySymbol.trim() || 'R',
+      glassTheme: nextTheme,
+    };
+    await onSaveAlarmsAndSettings(alarmDraft, nextSettings);
+    const chosen = GLASS_THEME_OPTIONS.find((t) => t.id === nextTheme)?.label || 'Midnight Glass';
+    onToast(`Theme switched to ${chosen}.`);
+  };
+
   const handleSaveAlarms = async () => {
     const nextSettings: JournalSettings = {
       quoteFrequency: quoteFreq,
       quoteNotifications: quoteNotifs,
       defaultPnlUnit,
       defaultRiskUnit,
-      currency: currencySymbol.trim() || '$',
+      currency: currencySymbol.trim() || 'R',
+      glassTheme,
     };
     await onSaveAlarmsAndSettings(alarmDraft, nextSettings);
     const synced = syncNativeAlarms(alarmDraft);
@@ -229,7 +277,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   const handleSavePreferences = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanCurr = currencySymbol.trim().slice(0, 8) || '$';
+    const cleanCurr = currencySymbol.trim().slice(0, 8) || 'R';
     await onSaveProfile({
       name: displayName.trim(),
       market: defaultMarket.trim(),
@@ -240,6 +288,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       defaultPnlUnit,
       defaultRiskUnit,
       currency: cleanCurr,
+      glassTheme,
     });
   };
 
@@ -345,6 +394,50 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           Manage your 4-digit PIN lock, cloud sync, session alarms, discipline reminders, and backups.
         </p>
       </div>
+
+      {/* Compact Glassmorphism Theme Switcher */}
+      <article className="rounded-2xl glass-card px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="h-9 w-9 rounded-xl glass-subcard flex items-center justify-center shrink-0 text-[#8df0c0]">
+            <Palette className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-sm font-bold text-[#eef3fb]">Theme</h3>
+            <p className="text-xs text-[#8b9ab0] truncate">
+              Glassmorphism surface tone across cards &amp; overlays
+            </p>
+          </div>
+        </div>
+
+        <div
+          role="group"
+          aria-label="Glassmorphism theme"
+          className="inline-flex flex-wrap items-center gap-1.5 rounded-xl glass-subcard p-1 shrink-0"
+        >
+          {GLASS_THEME_OPTIONS.map((option) => {
+            const active = glassTheme === option.id;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => void handleSelectTheme(option.id)}
+                className={`min-h-[36px] inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap shrink-0 ${
+                  active
+                    ? 'bg-white/[0.12] border border-white/25 text-[#eef3fb] shadow-sm'
+                    : 'border border-transparent text-[#8b9ab0] hover:text-[#eef3fb] hover:bg-white/[0.04]'
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`h-3 w-3 rounded-full bg-gradient-to-br ${option.swatchClass} ring-1 ring-white/25 shrink-0`}
+                />
+                <span>{option.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </article>
 
       {/* Cloud Account & Firestore Sync */}
       <article className="rounded-2xl glass-card p-5 space-y-4">
@@ -572,7 +665,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                     quoteNotifications: quoteNotifs,
                     defaultPnlUnit,
                     defaultRiskUnit,
-                    currency: currencySymbol.trim() || '$',
+                    currency: currencySymbol.trim() || 'R',
+                    glassTheme,
                   });
                 }}
                 className="w-full min-h-[44px] rounded-xl glass-input px-3 py-2 text-sm text-[#eef3fb] focus:border-[#47dca0] focus:outline-none"
@@ -607,7 +701,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                     quoteNotifications: next,
                     defaultPnlUnit,
                     defaultRiskUnit,
-                    currency: currencySymbol.trim() || '$',
+                    currency: currencySymbol.trim() || 'R',
+                    glassTheme,
                   });
                 }}
                 className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors ${
@@ -988,7 +1083,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 >
                   <option value="r">R-Multiple (Ratio)</option>
                   <option value="percent">Percentage (%)</option>
-                  <option value="money">Money ({currencySymbol || '$'})</option>
+                  <option value="money">
+                    Money ({currencySymbol && currencySymbol.toUpperCase() !== 'R' ? currencySymbol : '$'})
+                  </option>
                   <option value="value">Value / Points</option>
                 </select>
               </label>
@@ -1002,27 +1099,32 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 >
                   <option value="r">R-Multiple (Ratio)</option>
                   <option value="percent">Percentage (%)</option>
-                  <option value="money">Money ({currencySymbol || '$'})</option>
+                  <option value="money">
+                    Money ({currencySymbol && currencySymbol.toUpperCase() !== 'R' ? currencySymbol : '$'})
+                  </option>
                   <option value="value">Value / Points</option>
                 </select>
               </label>
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl glass-subcard px-3.5 py-2.5">
-              <span className="text-xs font-medium text-[#a9b7cc]">Preferred currency symbol</span>
+              <div>
+                <span className="text-xs font-medium text-[#a9b7cc]">Preferred currency</span>
+                <p className="text-[11px] text-[#7c8ca6]">Default is R (Risk / Reward)</p>
+              </div>
               <div className="flex flex-wrap items-center gap-1.5">
-                {['$', '€', '£', '¥', '₦'].map((sym) => (
+                {['R', '$', '€', '£', '¥', '₦'].map((sym) => (
                   <button
                     key={sym}
                     type="button"
                     onClick={() => setCurrencySymbol(sym)}
-                    className={`min-h-[32px] min-w-[34px] rounded-lg border px-2 text-xs font-bold transition ${
-                      currencySymbol === sym
+                    className={`min-h-[32px] min-w-[34px] rounded-lg border px-2.5 text-xs font-bold transition ${
+                      currencySymbol.toUpperCase() === sym.toUpperCase()
                         ? 'bg-[#47dca0]/18 border-[#47dca0]/55 text-[#8df0c0]'
                         : 'bg-[#080d18]/80 border-white/[0.08] text-[#8b9ab0] hover:text-[#eef3fb]'
                     }`}
                   >
-                    {sym}
+                    {sym === 'R' ? 'Default (R)' : sym}
                   </button>
                 ))}
                 <input
