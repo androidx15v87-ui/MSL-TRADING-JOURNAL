@@ -1,7 +1,9 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   Bot,
   Brain,
   Check,
@@ -612,6 +614,8 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
   const [threadsDrawerOpen, setThreadsDrawerOpen] = useState(false);
   const [threadSearch, setThreadSearch] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedThread, setCopiedThread] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
@@ -650,6 +654,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const audioClipInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const toolsMenuRef = useRef<HTMLDivElement | null>(null);
   const executeActionsRef = useRef(onExecuteAIActions);
   executeActionsRef.current = onExecuteAIActions;
 
@@ -740,10 +745,71 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
   }, []);
 
   useEffect(() => {
-    if (isActive) {
+    if (!isActive) return;
+    prewarmAIConnection();
+    const timer = window.setInterval(() => {
       prewarmAIConnection();
-    }
+    }, 45000);
+    return () => window.clearInterval(timer);
   }, [isActive]);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isActive || isTouchDevice) return;
+    const id = window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [isActive, activeId, isTouchDevice]);
+
+  useEffect(() => {
+    const onFocusInput = () => {
+      window.requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+      });
+    };
+    window.addEventListener('msl:focus-ai-input', onFocusInput);
+    return () => window.removeEventListener('msl:focus-ai-input', onFocusInput);
+  }, []);
+
+  useEffect(() => {
+    if (!toolsMenuOpen) return;
+    const onPointerDown = (e: MouseEvent | TouchEvent) => {
+      if (toolsMenuRef.current && !toolsMenuRef.current.contains(e.target as Node)) {
+        setToolsMenuOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setToolsMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('touchstart', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('touchstart', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [toolsMenuOpen]);
+
+  const handleViewportScroll = useCallback(() => {
+    const viewport = messagesViewportRef.current;
+    if (!viewport) return;
+    const distanceFromBottom =
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    setShowScrollToBottom(distanceFromBottom > 140);
+  }, []);
+
+  const scrollToBottomSmooth = useCallback(() => {
+    const viewport = messagesViewportRef.current;
+    if (!viewport) return;
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
+  }, []);
 
   // rAF-throttled direct scrollTop auto-scroll so token streaming never triggers smooth-scroll reflow lag
   useEffect(() => {
@@ -756,6 +822,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
         viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
       if (distanceFromBottom < 180 || !isStreaming) {
         viewport.scrollTop = viewport.scrollHeight;
+        setShowScrollToBottom(false);
       }
     });
     return () => {
@@ -770,8 +837,12 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  }, [input]);
+    if (!input) {
+      el.style.height = '24px';
+    } else {
+      el.style.height = `${Math.max(24, Math.min(el.scrollHeight, 160))}px`;
+    }
+  }, [input, isActive, isFullScreen]);
 
   const immersiveActive = isActive && isFullScreen;
 
@@ -783,7 +854,9 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
     }
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (lightboxImage) {
+        if (toolsMenuOpen) {
+          setToolsMenuOpen(false);
+        } else if (lightboxImage) {
           setLightboxImage(null);
         } else if (threadsDrawerOpen) {
           setThreadsDrawerOpen(false);
@@ -799,7 +872,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
       }
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [immersiveActive, lightboxImage, threadsDrawerOpen]);
+  }, [immersiveActive, lightboxImage, threadsDrawerOpen, toolsMenuOpen]);
 
   const resolveJournalSnapshot = useCallback(
     (promptText?: string) =>
@@ -1646,8 +1719,12 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
           )}
 
           {/* Centered Editorial Messages Viewport */}
-          <div ref={messagesViewportRef} className="flex-1 overflow-y-auto overscroll-contain px-4 sm:px-6 lg:px-10 py-6">
-            <div className={`${immersiveActive ? 'max-w-4xl' : 'max-w-3xl'} mx-auto w-full space-y-5`}>
+          <div
+            ref={messagesViewportRef}
+            onScroll={handleViewportScroll}
+            className="flex-1 overflow-y-auto overscroll-contain px-4 sm:px-6 lg:px-10 py-6"
+          >
+            <div className="max-w-3xl mx-auto w-full space-y-5">
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center text-center max-w-2xl mx-auto py-10 sm:py-16 space-y-6">
                   <div className="space-y-3">
@@ -1725,9 +1802,22 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
             </div>
           </div>
 
-          {/* Floating Liquid-Glass Composer Capsule */}
-          <div className="px-4 sm:px-6 lg:px-10 pb-3 sm:pb-5 pt-1 shrink-0">
-            <div className={`${immersiveActive ? 'max-w-4xl' : 'max-w-3xl'} mx-auto w-full space-y-2`}>
+          {/* ChatGPT-Style Compact Floating Composer */}
+          <div className="relative px-3 sm:px-6 lg:px-10 pb-2.5 sm:pb-4 pt-1 shrink-0">
+            {showScrollToBottom && messages.length > 0 && (
+              <div className="pointer-events-none absolute -top-11 left-1/2 -translate-x-1/2 z-20">
+                <button
+                  type="button"
+                  onClick={scrollToBottomSmooth}
+                  aria-label="Scroll to latest message"
+                  className="pointer-events-auto h-8 w-8 rounded-full liquid-glass border border-white/20 flex items-center justify-center text-[#dce5f4] hover:text-[#8df0c0] hover:border-[#47dca0]/50 shadow-lg transition"
+                >
+                  <ArrowDown className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            <div className="max-w-3xl mx-auto w-full space-y-1.5">
               <input
                 ref={audioClipInputRef}
                 type="file"
@@ -1742,9 +1832,17 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                 }}
                 className="hidden"
               />
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleAttachImages}
+                className="hidden"
+              />
 
               {attachError && (
-                <div className="flex items-center justify-between gap-2 text-xs text-[#ff7d91] px-1">
+                <div className="flex items-center justify-between gap-2 text-xs text-[#ff7d91] px-2">
                   <span className="truncate">{attachError}</span>
                   <div className="flex items-center gap-2 shrink-0">
                     {attachErrorRetryable && canQuickRetryLast && lastMessage && (
@@ -1773,8 +1871,8 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
               )}
 
               {micBlockedField === 'ai-prompt' && !isListening && !isTranscribing && (
-                <div className="rounded-2xl glass-subcard border border-[#8ebeff]/35 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
-                  <div className="flex items-center gap-2.5 min-w-0">
+                <div className="rounded-2xl glass-subcard border border-[#8ebeff]/35 px-3.5 py-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
                     <Mic className="w-4 h-4 text-[#8ebeff] shrink-0" />
                     <span className="text-xs text-[#dce6f5]">
                       Live browser mic is unavailable here — record or upload an audio clip instead.
@@ -1784,23 +1882,23 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                     <button
                       type="button"
                       onClick={() => void toggleField('ai-prompt')}
-                      className="min-h-[34px] rounded-xl glass-subcard px-2.5 py-1 text-xs font-medium text-[#cfe0f8] hover:text-[#eef3fb] transition"
+                      className="min-h-[32px] rounded-xl glass-subcard px-2.5 py-1 text-xs font-medium text-[#cfe0f8] hover:text-[#eef3fb] transition"
                     >
                       Try live mic
                     </button>
                     <button
                       type="button"
                       onClick={() => audioClipInputRef.current?.click()}
-                      className="min-h-[34px] inline-flex items-center gap-1.5 rounded-xl bg-[#47dca0] px-3 py-1 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] transition"
+                      className="min-h-[32px] inline-flex items-center gap-1.5 rounded-xl bg-[#47dca0] px-3 py-1 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] transition"
                     >
                       <Mic className="w-3.5 h-3.5" />
-                      <span>Record / upload clip</span>
+                      <span>Upload clip</span>
                     </button>
                     <button
                       type="button"
                       onClick={dismissMicFallback}
                       aria-label="Dismiss voice note options"
-                      className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-xl text-[#8b9ab0] hover:text-[#eef3fb] transition"
+                      className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-xl text-[#8b9ab0] hover:text-[#eef3fb] transition"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -1809,7 +1907,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
               )}
 
               {voiceState !== 'idle' && (
-                <div className="flex items-center justify-between gap-2 rounded-xl bg-[#47dca0]/10 border border-[#47dca0]/30 px-3 py-2 text-xs text-[#8df0c0]">
+                <div className="flex items-center justify-between gap-2 rounded-xl bg-[#47dca0]/10 border border-[#47dca0]/30 px-3 py-1.5 text-xs text-[#8df0c0]">
                   <span className="inline-flex items-center gap-2 truncate">
                     {voiceState === 'loading' ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
@@ -1833,13 +1931,13 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
               )}
 
               {(isListening || isTranscribing || interimText) && (
-                <div className="rounded-2xl bg-[#47dca0]/[0.08] border border-[#47dca0]/35 px-3.5 py-2.5 flex items-center justify-between gap-3">
+                <div className="rounded-2xl bg-[#47dca0]/[0.08] border border-[#47dca0]/35 px-3.5 py-2 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <div aria-hidden="true" className="flex items-center gap-[2.5px] h-6 shrink-0">
+                    <div aria-hidden="true" className="flex items-center gap-[2.5px] h-5 shrink-0">
                       {audioBands.map((level, idx) => (
                         <span
                           key={idx}
-                          className="w-[2.5px] h-6 rounded-full bg-[#47dca0] origin-center transition-transform duration-75"
+                          className="w-[2.5px] h-5 rounded-full bg-[#47dca0] origin-center transition-transform duration-75"
                           style={{ transform: `scaleY(${Math.max(0.16, level)})` }}
                         />
                       ))}
@@ -1850,7 +1948,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                           ? 'Transcribing voice note…'
                           : `Listening · ${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`}
                       </p>
-                      <p className="mt-0.5 text-xs text-[#dce6f5] truncate">
+                      <p className="text-xs text-[#dce6f5] truncate">
                         {interimText || 'Speak naturally — tap Done to insert into prompt'}
                       </p>
                     </div>
@@ -1860,7 +1958,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                       type="button"
                       onClick={() => cancelVoice()}
                       disabled={isTranscribing}
-                      className="min-h-[36px] rounded-xl px-2.5 text-xs font-medium text-[#9fb0c7] hover:text-[#eef3fb] disabled:opacity-40 transition"
+                      className="min-h-[32px] rounded-xl px-2.5 text-xs font-medium text-[#9fb0c7] hover:text-[#eef3fb] disabled:opacity-40 transition"
                     >
                       Cancel
                     </button>
@@ -1868,7 +1966,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                       type="button"
                       onClick={() => stopVoice(false)}
                       disabled={isTranscribing}
-                      className="min-h-[36px] inline-flex items-center gap-1 rounded-xl bg-[#47dca0] px-3 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] disabled:opacity-50 transition"
+                      className="min-h-[32px] inline-flex items-center gap-1 rounded-xl bg-[#47dca0] px-3 text-xs font-bold text-[#051612] hover:bg-[#62e4b0] disabled:opacity-50 transition"
                     >
                       <Check className="w-3.5 h-3.5" />
                       <span>Done</span>
@@ -1877,13 +1975,13 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                 </div>
               )}
 
-              <div className="rounded-2xl liquid-glass p-3 sm:p-3.5 space-y-2 focus-within:border-[#47dca0]/45">
+              <div className="rounded-[26px] liquid-glass px-3 py-2 sm:px-3.5 sm:py-2 focus-within:border-[#47dca0]/45 transition-colors">
                 {attachments.length > 0 && (
-                  <div className="flex flex-wrap gap-2 px-1 pt-0.5">
+                  <div className="flex flex-wrap gap-2 px-1 pb-2">
                     {attachments.map((att) => (
                       <div
                         key={att.id}
-                        className="relative h-14 w-20 rounded-xl overflow-hidden border border-white/[0.15]"
+                        className="relative h-12 w-16 rounded-xl overflow-hidden border border-white/[0.15]"
                       >
                         <button
                           type="button"
@@ -1904,9 +2002,9 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                             setAttachments((prev) => prev.filter((x) => x.id !== att.id))
                           }
                           aria-label={`Remove ${att.name}`}
-                          className="absolute top-1 right-1 h-5 w-5 flex items-center justify-center rounded-md bg-black/80 text-white"
+                          className="absolute top-0.5 right-0.5 h-4 w-4 flex items-center justify-center rounded-md bg-black/80 text-white"
                         >
-                          <X className="w-3 h-3" />
+                          <X className="w-2.5 h-2.5" />
                         </button>
                       </div>
                     ))}
@@ -1915,7 +2013,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
 
                 <textarea
                   ref={textareaRef}
-                  rows={2}
+                  rows={1}
                   value={input}
                   onFocus={prewarmAIConnection}
                   onChange={(e) => {
@@ -1929,49 +2027,133 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                       applyCodeFormat();
                       return;
                     }
-                    // Shift+Enter creates a new paragraph break; Enter sends on desktop
-                    if (e.key === 'Enter' && e.shiftKey) {
-                      e.preventDefault();
-                      const el = e.currentTarget;
-                      const start = el.selectionStart ?? input.length;
-                      const end = el.selectionEnd ?? input.length;
-                      const prefix = input.slice(0, start);
-                      const br = prefix.endsWith('\n') ? '\n' : '\n\n';
-                      const nextVal = `${prefix}${br}${input.slice(end)}`;
-                      setInput(nextVal);
-                      window.requestAnimationFrame(() => {
-                        el.focus();
-                        const caret = start + br.length;
-                        el.setSelectionRange(caret, caret);
-                      });
-                      return;
-                    }
                     if (!isTouchDevice && e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
                       void handleSend();
                     }
                   }}
-                  placeholder="Ask KAIROS anything… (Shift+Enter new paragraph, Ctrl/Cmd+E code)"
-                  className="w-full min-h-[54px] max-h-44 bg-transparent px-2 py-1 text-sm text-[#eef3fb] placeholder:text-[#6e7e98] focus:outline-none resize-none leading-relaxed"
+                  placeholder="Message KAIROS…"
+                  aria-label="Message KAIROS"
+                  className="w-full min-h-[24px] max-h-40 bg-transparent px-1.5 py-1 text-sm text-[#eef3fb] placeholder:text-[#7c8ca5] focus:outline-none resize-none leading-6 overflow-y-auto"
                 />
 
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/[0.07]">
-                  <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-                    <input
-                      ref={imageInputRef}
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      onChange={handleAttachImages}
-                      className="hidden"
-                    />
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1 min-w-0">
+                    {/* + Tools & Attachments Popover Menu */}
+                    <div ref={toolsMenuRef} className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setToolsMenuOpen((v) => !v)}
+                        disabled={isStreaming}
+                        aria-expanded={toolsMenuOpen}
+                        aria-label="Add attachments or tools"
+                        title="Attach chart, code, context & memory"
+                        className={`h-8 w-8 rounded-full flex items-center justify-center transition shrink-0 ${
+                          toolsMenuOpen
+                            ? 'bg-white/[0.14] text-[#eef3fb]'
+                            : 'text-[#9aa8be] hover:text-[#eef3fb] hover:bg-white/[0.08]'
+                        } disabled:opacity-45`}
+                      >
+                        <Plus className={`w-4 h-4 transition-transform duration-150 ${toolsMenuOpen ? 'rotate-45' : ''}`} />
+                      </button>
+
+                      {toolsMenuOpen && (
+                        <div
+                          role="menu"
+                          className="absolute bottom-full left-0 mb-2 w-60 rounded-2xl glass-modal p-1.5 z-30 shadow-2xl space-y-0.5"
+                        >
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setToolsMenuOpen(false);
+                              imageInputRef.current?.click();
+                            }}
+                            disabled={addingImage || isStreaming}
+                            className="w-full min-h-[36px] flex items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-xs font-medium text-[#dce5f4] hover:bg-white/[0.08] hover:text-[#eef3fb] transition text-left"
+                          >
+                            <ImagePlus className="w-4 h-4 text-[#8df0c0] shrink-0" />
+                            <span>Add chart screenshot</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setToolsMenuOpen(false);
+                              applyCodeFormat();
+                            }}
+                            className="w-full min-h-[36px] flex items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-xs font-medium text-[#dce5f4] hover:bg-white/[0.08] hover:text-[#eef3fb] transition text-left"
+                          >
+                            <span className="flex items-center gap-2.5">
+                              <Code className="w-4 h-4 text-[#8ebeff] shrink-0" />
+                              <span>Insert code block</span>
+                            </span>
+                            <span className="text-[10px] text-[#7f8fa8] font-mono">⌘E</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setSyncContext((v) => !v);
+                              setToolsMenuOpen(false);
+                            }}
+                            className="w-full min-h-[36px] flex items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-xs font-medium text-[#dce5f4] hover:bg-white/[0.08] hover:text-[#eef3fb] transition text-left"
+                          >
+                            <span className="flex items-center gap-2.5">
+                              <Zap className={`w-4 h-4 shrink-0 ${syncContext ? 'text-[#47dca0]' : 'text-[#8b9ab0]'}`} />
+                              <span>Journal context</span>
+                            </span>
+                            <span className={`text-[11px] font-semibold ${syncContext ? 'text-[#8df0c0]' : 'text-[#7f8fa8]'}`}>
+                              {syncContext ? 'On' : 'Off'}
+                            </span>
+                          </button>
+
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setToolsMenuOpen(false);
+                              setMemoryOpen(true);
+                            }}
+                            className="w-full min-h-[36px] flex items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-xs font-medium text-[#dce5f4] hover:bg-white/[0.08] hover:text-[#eef3fb] transition text-left"
+                          >
+                            <span className="flex items-center gap-2.5">
+                              <Brain className="w-4 h-4 text-[#8df0c0] shrink-0" />
+                              <span>KAIROS Memory</span>
+                            </span>
+                            {memories.length > 0 && (
+                              <span className="text-[11px] font-bold text-[#8df0c0] tabular-nums">
+                                {memories.length}
+                              </span>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setToolsMenuOpen(false);
+                              audioClipInputRef.current?.click();
+                            }}
+                            className="w-full min-h-[36px] flex items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-xs font-medium text-[#dce5f4] hover:bg-white/[0.08] hover:text-[#eef3fb] transition text-left"
+                          >
+                            <Mic className="w-4 h-4 text-[#8ebeff] shrink-0" />
+                            <span>Upload voice clip</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Quick Desktop Chart Image Upload */}
                     <button
                       type="button"
                       onClick={() => imageInputRef.current?.click()}
                       disabled={addingImage || isStreaming}
                       title="Attach chart screenshot"
                       aria-label="Add image"
-                      className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl glass-subcard text-[#9aa8be] hover:text-[#8df0c0] disabled:opacity-50 transition shrink-0"
+                      className="hidden sm:flex h-8 w-8 rounded-full items-center justify-center text-[#9aa8be] hover:text-[#8df0c0] hover:bg-white/[0.08] disabled:opacity-45 transition shrink-0"
                     >
                       {addingImage ? (
                         <Loader2 className="w-4 h-4 animate-spin text-[#47dca0]" />
@@ -1980,78 +2162,41 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                       )}
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => void toggleField('ai-prompt')}
-                      disabled={isTranscribing || isStreaming}
-                      title={isListening ? 'Stop voice note' : 'Dictate voice note'}
-                      aria-label={isListening ? 'Stop voice note' : 'Record voice note'}
-                      className={`min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl border transition shrink-0 ${
-                        isListening
-                          ? 'bg-[#ff7d91]/20 border-[#ff7d91]/55 text-[#ff7d91]'
-                          : isTranscribing
-                          ? 'bg-[#47dca0]/15 border-[#47dca0]/40 text-[#8df0c0]'
-                          : 'glass-subcard text-[#9aa8be] hover:text-[#8df0c0]'
-                      }`}
-                    >
-                      {isTranscribing ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : isListening ? (
-                        <Square className="w-3.5 h-3.5 fill-current" />
-                      ) : (
-                        <Mic className="w-4 h-4" />
-                      )}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={applyCodeFormat}
-                      disabled={isStreaming}
-                      title="Format code snippet or block (Ctrl/Cmd+E)"
-                      aria-label="Format code"
-                      className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl glass-subcard px-2.5 text-xs font-medium text-[#9aa8be] hover:text-[#8df0c0] hover:border-[#47dca0]/40 disabled:opacity-50 transition whitespace-nowrap shrink-0"
-                    >
-                      <Code className="w-3.5 h-3.5 text-[#8df0c0]" />
-                      <span className="hidden sm:inline">Code</span>
-                    </button>
-
-                    <span aria-hidden="true" className="hidden sm:block h-5 w-px bg-white/[0.1] mx-0.5" />
-
-                    {/* Fast | Deep Thinking Switcher directly inside chat interface */}
+                    {/* Compact Fast | Deep Switcher */}
                     <div
                       role="group"
                       aria-label="Thinking mode"
-                      className="inline-flex items-center rounded-xl glass-subcard p-0.5 shrink-0"
+                      className="inline-flex items-center rounded-full bg-white/[0.05] border border-white/[0.08] p-0.5 shrink-0"
                     >
                       <button
                         type="button"
                         onClick={() => setAiMode('fast')}
-                        className={`min-h-[34px] inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold transition whitespace-nowrap ${
+                        className={`h-7 inline-flex items-center gap-1 rounded-full px-2.5 text-[11px] font-semibold transition whitespace-nowrap ${
                           aiMode === 'fast'
                             ? 'bg-[#47dca0] text-[#051612]'
                             : 'text-[#9aa8be] hover:text-[#eef3fb]'
                         }`}
-                        title="Fast thinking · Instant low-latency replies & app control"
+                        title="Fast thinking · Instant low-latency replies"
                       >
-                        <Zap className="w-3.5 h-3.5" />
+                        <Zap className="w-3 h-3" />
                         <span>Fast</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => setAiMode('deep')}
-                        className={`min-h-[34px] inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold transition whitespace-nowrap ${
+                        className={`h-7 inline-flex items-center gap-1 rounded-full px-2.5 text-[11px] font-semibold transition whitespace-nowrap ${
                           aiMode === 'deep'
                             ? 'bg-[#8ebeff] text-[#051612]'
                             : 'text-[#9aa8be] hover:text-[#eef3fb]'
                         }`}
                         title="Deep thinking · Quantitative audit & multi-step reasoning"
                       >
-                        <Sparkles className="w-3.5 h-3.5" />
+                        <Sparkles className="w-3 h-3" />
                         <span>Deep</span>
                       </button>
                     </div>
 
-                    {/* Web Search Grounding Toggle directly inside chat interface */}
+                    {/* Compact Web Search Grounding Toggle */}
                     <button
                       type="button"
                       onClick={() => setWebSearch((v) => !v)}
@@ -2059,53 +2204,52 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                       title={
                         webSearch
                           ? 'Live Web Search: Always grounded on latest headlines & rates'
-                          : 'Smart Auto Web Search (tap to force live search on every prompt)'
+                          : 'Enable live web search grounding'
                       }
-                      className={`min-h-[38px] inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold border transition whitespace-nowrap shrink-0 ${
+                      className={`h-8 inline-flex items-center gap-1.5 rounded-full px-2.5 text-xs font-medium border transition whitespace-nowrap shrink-0 ${
                         webSearch
-                          ? 'bg-[#8ebeff]/18 border-[#8ebeff]/50 text-[#cfe4ff]'
-                          : 'glass-subcard text-[#9aa8be] hover:text-[#eef3fb]'
+                          ? 'bg-[#8ebeff]/16 border-[#8ebeff]/45 text-[#cfe4ff]'
+                          : 'border-transparent text-[#9aa8be] hover:text-[#eef3fb] hover:bg-white/[0.08]'
                       }`}
                     >
-                      <Globe className={`w-4 h-4 ${webSearch ? 'text-[#8ebeff]' : 'text-[#8df0c0]'}`} />
-                      <span className="hidden md:inline">Web</span>
-                    </button>
-
-                    {/* Memory Icon directly inside chat interface */}
-                    <button
-                      type="button"
-                      onClick={() => setMemoryOpen(true)}
-                      aria-label="Open KAIROS Memory"
-                      title="Manage persistent KAIROS memory"
-                      className={`min-h-[38px] inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold border transition whitespace-nowrap shrink-0 ${
-                        memories.length > 0
-                          ? 'glass-subcard text-[#eef3fb] border-[#47dca0]/40 hover:border-[#47dca0]/65'
-                          : 'glass-subcard text-[#9aa8be] hover:text-[#eef3fb]'
-                      }`}
-                    >
-                      <Brain className="w-4 h-4 text-[#8df0c0]" />
-                      <span className="hidden md:inline">Memory</span>
-                      {memories.length > 0 && (
-                        <span className="tabular-nums text-[11px] font-bold text-[#8df0c0]">
-                          {memories.length}
-                        </span>
-                      )}
+                      <Globe className={`w-3.5 h-3.5 ${webSearch ? 'text-[#8ebeff]' : 'text-[#8df0c0]'}`} />
+                      <span className="hidden sm:inline">Search</span>
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-2.5 ml-auto shrink-0">
-                    <span className="hidden xl:inline text-[11px] text-[#6d7d96] whitespace-nowrap">
-                      Shift+Enter · paragraph
-                    </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => void toggleField('ai-prompt')}
+                      disabled={isTranscribing || isStreaming}
+                      title={isListening ? 'Stop voice note' : 'Dictate voice note'}
+                      aria-label={isListening ? 'Stop voice note' : 'Record voice note'}
+                      className={`h-8 w-8 rounded-full flex items-center justify-center transition shrink-0 ${
+                        isListening
+                          ? 'bg-[#ff7d91]/20 border border-[#ff7d91]/55 text-[#ff7d91]'
+                          : isTranscribing
+                          ? 'bg-[#47dca0]/15 border border-[#47dca0]/40 text-[#8df0c0]'
+                          : 'text-[#9aa8be] hover:text-[#eef3fb] hover:bg-white/[0.08]'
+                      }`}
+                    >
+                      {isTranscribing ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : isListening ? (
+                        <Square className="w-3 h-3 fill-current" />
+                      ) : (
+                        <Mic className="w-4 h-4" />
+                      )}
+                    </button>
+
                     {isStreaming ? (
                       <button
                         type="button"
                         onClick={handleStop}
                         aria-label="Stop response"
-                        className="min-h-[38px] min-w-[38px] px-3 flex items-center justify-center gap-1.5 rounded-xl bg-[#ff7d91]/20 border border-[#ff7d91]/40 text-xs font-semibold text-[#ff7d91] hover:bg-[#ff7d91]/30 transition whitespace-nowrap shrink-0"
+                        title="Stop generating"
+                        className="h-8 w-8 rounded-full flex items-center justify-center bg-[#ff7d91]/20 border border-[#ff7d91]/45 text-[#ff7d91] hover:bg-[#ff7d91]/30 transition shrink-0"
                       >
-                        <Square className="w-3.5 h-3.5 fill-current" />
-                        <span>Stop</span>
+                        <Square className="w-3 h-3 fill-current" />
                       </button>
                     ) : (
                       <button
@@ -2113,10 +2257,10 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
                         onClick={() => void handleSend()}
                         disabled={!input.trim() && attachments.length === 0}
                         aria-label="Send message"
-                        className="min-h-[38px] min-w-[40px] px-4 flex items-center justify-center gap-1.5 rounded-xl bg-[#47dca0] text-xs font-bold text-[#051612] hover:bg-[#62e4b0] disabled:opacity-40 transition whitespace-nowrap shrink-0"
+                        title="Send message"
+                        className="h-8 w-8 rounded-full flex items-center justify-center bg-[#47dca0] text-[#051612] hover:bg-[#62e4b0] disabled:bg-white/[0.08] disabled:text-[#6d7d96] transition shrink-0"
                       >
-                        <Send className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">Send</span>
+                        <ArrowUp className="w-4 h-4 stroke-[2.5]" />
                       </button>
                     )}
                   </div>

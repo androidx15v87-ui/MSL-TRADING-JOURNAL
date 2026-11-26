@@ -11,6 +11,7 @@ import {
   CloudOff,
   Layers,
   LayoutDashboard,
+  Loader2,
   LogIn,
   LogOut,
   Menu,
@@ -83,7 +84,8 @@ export const Layout: React.FC<LayoutProps> = ({
   const [moreOpen, setMoreOpen] = useState(false);
   const [journalMenuOpen, setJournalMenuOpen] = useState(false);
   const journalMenuRef = useRef<HTMLDivElement | null>(null);
-  const { user, authBusy, cloudStatus } = useFirebase();
+  const { user, authBusy, cloudStatus, isSyncing } = useFirebase();
+  const syncActive = isSyncing || cloudStatus === 'connecting';
   const isMoreActive = MOBILE_DRAWER_TABS.includes(activePage);
 
   useEffect(() => {
@@ -135,7 +137,7 @@ export const Layout: React.FC<LayoutProps> = ({
                   MSL Journal
                 </span>
                 <span className="block text-[10px] sm:text-[11px] font-medium text-[#7f8fa8] truncate tabular-nums">
-                  {displayName ? `${displayName} · Version 10.6.9` : 'Version 10.6.9'}
+                  {displayName ? `${displayName} · Version 11.0.0` : 'Version 11.0.0'}
                 </span>
               </span>
             </button>
@@ -344,28 +346,40 @@ export const Layout: React.FC<LayoutProps> = ({
                 <button
                   type="button"
                   onClick={() => handleSelectPage('settings')}
+                  aria-busy={syncActive}
                   title={
-                    cloudStatus === 'connecting'
-                      ? 'Syncing Cloud Firestore…'
+                    syncActive
+                      ? 'Cloud Sync in progress…'
                       : cloudStatus === 'error'
-                      ? 'Cloud sync issue'
-                      : `Synced (${user.email || 'Google Account'})`
+                      ? 'Cloud Sync issue'
+                      : `Cloud Sync · Synced (${user.email || 'Google Account'})`
                   }
-                  className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-[#111c2d] border border-[#23344f] px-2.5 py-1.5 text-xs font-semibold text-[#eef3fb] hover:border-[#47dca0]/45 transition"
+                  className={`min-h-[40px] inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold text-[#eef3fb] transition ${
+                    syncActive
+                      ? 'bg-[#47dca0]/10 border-[#47dca0]/45 shadow-[0_0_16px_-6px_rgba(71,220,160,0.45)]'
+                      : 'bg-[#111c2d] border-[#23344f] hover:border-[#47dca0]/45'
+                  }`}
                 >
-                  {cloudStatus === 'connecting' ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#47dca0]" />
+                  {syncActive ? (
+                    <span className="inline-flex items-center gap-1">
+                      <Cloud className="w-3.5 h-3.5 text-[#47dca0]" />
+                      <Loader2
+                        className="w-3 h-3 text-[#8df0c0] animate-spin motion-reduce:animate-none"
+                        style={{ animationDuration: '1.2s' }}
+                        aria-hidden="true"
+                      />
+                    </span>
                   ) : cloudStatus === 'error' ? (
                     <CloudOff className="w-3.5 h-3.5 text-[#ff7d91]" />
                   ) : (
                     <Cloud className="w-3.5 h-3.5 text-[#47dca0]" />
                   )}
                   <span className="hidden lg:inline">
-                    {cloudStatus === 'connecting'
-                      ? 'Syncing'
+                    {syncActive
+                      ? 'Syncing…'
                       : cloudStatus === 'error'
                       ? 'Offline'
-                      : 'Synced'}
+                      : 'Cloud Sync'}
                   </span>
                 </button>
               ) : (
@@ -537,7 +551,7 @@ export const Layout: React.FC<LayoutProps> = ({
                         {user.displayName || user.email || 'Google Account'}
                       </p>
                       <p className="text-[11px] text-[#8b9ab0]">
-                        {cloudStatus === 'connecting'
+                        {syncActive
                           ? 'Syncing Cloud Firestore…'
                           : cloudStatus === 'error'
                           ? 'Cloud sync issue'

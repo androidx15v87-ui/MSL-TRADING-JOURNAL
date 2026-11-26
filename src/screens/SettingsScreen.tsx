@@ -114,7 +114,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onLockApp,
   onToast,
 }) => {
-  const { user, authBusy, cloudStatus, cloudError } = useFirebase();
+  const { user, authBusy, cloudStatus, isSyncing, cloudError } = useFirebase();
   const [alarmDraft, setAlarmDraft] = useState<SessionAlarm[]>(alarms);
   const [quoteFreq, setQuoteFreq] = useState<number>(settings.quoteFrequency);
   const [quoteNotifs, setQuoteNotifs] = useState<boolean>(settings.quoteNotifications);
@@ -452,9 +452,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           </div>
           {user ? (
             <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#47dca0]/15 border border-[#47dca0]/35 px-2.5 py-1 text-xs font-semibold text-[#8df0c0]">
-              {cloudStatus === 'connecting' ? (
+              {isSyncing || cloudStatus === 'connecting' ? (
                 <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin motion-reduce:animate-none" />
                   <span>Syncing…</span>
                 </>
               ) : cloudStatus === 'error' ? (
@@ -1173,7 +1173,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-xs tabular-nums shrink-0">
-          <span className="font-semibold text-[#8df0c0]">Version 10.6.9</span>
+          <span className="font-semibold text-[#8df0c0]">Version 11.0.0</span>
           <span aria-hidden="true" className="text-[#56647c]">·</span>
           <span className="font-semibold text-[#eef3fb]">Developed by ANDROID</span>
         </div>

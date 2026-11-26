@@ -762,7 +762,7 @@ export function buildBackupPayload(state: JournalState): BackupPayload {
   return {
     ...state,
     format: 'msl-v10-premium',
-    version: 10,
+    version: 11,
     exportedAt: new Date().toISOString(),
   };
 }

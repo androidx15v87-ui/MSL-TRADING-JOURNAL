@@ -34,6 +34,54 @@ import { applyLegacyJournalMigration } from './db';
 import { db, handleFirestoreError, OperationType } from './firebase';
 import { VALIDATION_LIMITS, VALIDATION_PATTERNS } from './validationConstants';
 
+type SyncActivityListener = (syncing: boolean) => void;
+let activeCloudSyncOps = 0;
+let idleSyncTimer: ReturnType<typeof setTimeout> | null = null;
+const syncActivityListeners = new Set<SyncActivityListener>();
+
+export function subscribeCloudSyncActivity(listener: SyncActivityListener): () => void {
+  syncActivityListeners.add(listener);
+  listener(activeCloudSyncOps > 0);
+  return () => {
+    syncActivityListeners.delete(listener);
+  };
+}
+
+function emitCloudSyncActivity(syncing: boolean): void {
+  syncActivityListeners.forEach((listener) => listener(syncing));
+}
+
+async function withCloudSyncTracking<T>(fn: () => Promise<T>): Promise<T> {
+  if (idleSyncTimer !== null) {
+    clearTimeout(idleSyncTimer);
+    idleSyncTimer = null;
+  }
+  const wasIdle = activeCloudSyncOps === 0;
+  activeCloudSyncOps += 1;
+  if (wasIdle) {
+    emitCloudSyncActivity(true);
+  }
+  const startedAt = Date.now();
+  try {
+    return await fn();
+  } finally {
+    activeCloudSyncOps = Math.max(0, activeCloudSyncOps - 1);
+    if (activeCloudSyncOps === 0) {
+      const holdMs = Math.max(0, 600 - (Date.now() - startedAt));
+      if (holdMs === 0) {
+        emitCloudSyncActivity(false);
+      } else {
+        idleSyncTimer = setTimeout(() => {
+          idleSyncTimer = null;
+          if (activeCloudSyncOps === 0) {
+            emitCloudSyncActivity(false);
+          }
+        }, holdMs);
+      }
+    }
+  }
+}
+
 function sanitizeId(raw: string | undefined): string {
   const cleaned = String(raw || '')
     .trim()
@@ -380,11 +428,12 @@ function timestampToIso(val: unknown): string {
   return new Date().toISOString();
 }
 
-export async function ensureCloudWorkspace(
+export function ensureCloudWorkspace(
   uid: string,
   localState: JournalState,
   googleDisplayName?: string | null
 ): Promise<{ isNewWorkspace: boolean }> {
+  return withCloudSyncTracking(async () => {
   const userPath = `users/${uid}`;
   const userRef = doc(db, 'users', uid);
 
@@ -420,6 +469,7 @@ export async function ensureCloudWorkspace(
   // Push local models, custom fields, alarms, trades & images into subcollections
   await writeSubcollectionsInBatches(uid, seedState);
   return { isNewWorkspace: true };
+  });
 }
 
 async function writeSubcollectionsInBatches(uid: string, state: JournalState): Promise<void> {
@@ -500,7 +550,8 @@ async function writeSubcollectionsInBatches(uid: string, state: JournalState): P
   }
 }
 
-export async function cloudSaveJournal(uid: string, journal: TradingJournal): Promise<void> {
+export function cloudSaveJournal(uid: string, journal: TradingJournal): Promise<void> {
+  return withCloudSyncTracking(async () => {
   const payload = sanitizeTradingJournalPayload(uid, journal);
   const path = `users/${uid}/journals/${payload.id}`;
   const ref = doc(db, 'users', uid, 'journals', payload.id);
@@ -533,9 +584,11 @@ export async function cloudSaveJournal(uid: string, journal: TradingJournal): Pr
   } catch (error) {
     handleFirestoreError(error, exists ? OperationType.UPDATE : OperationType.CREATE, path);
   }
+  });
 }
 
-export async function cloudSoftDeleteJournal(uid: string, journal: TradingJournal): Promise<void> {
+export function cloudSoftDeleteJournal(uid: string, journal: TradingJournal): Promise<void> {
+  return withCloudSyncTracking(async () => {
   const cleanId = sanitizeId(journal.id);
   const path = `users/${uid}/journals/${cleanId}`;
   const ref = doc(db, 'users', uid, 'journals', cleanId);
@@ -573,14 +626,16 @@ export async function cloudSoftDeleteJournal(uid: string, journal: TradingJourna
   } catch (error) {
     handleFirestoreError(error, exists ? OperationType.UPDATE : OperationType.CREATE, path);
   }
+  });
 }
 
-export async function mergeMissingLocalTradesToCloud(
+export function mergeMissingLocalTradesToCloud(
   uid: string,
   localState: JournalState,
   cloudTrades: Trade[],
   cloudJournals: TradingJournal[] = []
 ): Promise<number> {
+  return withCloudSyncTracking(async () => {
   const existingJournalIds = new Set(cloudJournals.map((j) => j.id));
   const missingJournals = (localState.journals || []).filter((j) => !existingJournalIds.has(j.id));
   for (const journal of missingJournals) {
@@ -595,9 +650,11 @@ export async function mergeMissingLocalTradesToCloud(
     await cloudSaveTrade(uid, trade);
   }
   return missing.length;
+  });
 }
 
-export async function cloudSaveTrade(uid: string, trade: Trade): Promise<void> {
+export function cloudSaveTrade(uid: string, trade: Trade): Promise<void> {
+  return withCloudSyncTracking(async () => {
   const payload = sanitizeTradePayload(uid, trade);
   const tradePath = `users/${uid}/trades/${payload.id}`;
   const tradeRef = doc(db, 'users', uid, 'trades', payload.id);
@@ -685,9 +742,11 @@ export async function cloudSaveTrade(uid: string, trade: Trade): Promise<void> {
       tradePath
     );
   }
+  });
 }
 
-export async function cloudDeleteTrade(uid: string, tradeId: string): Promise<void> {
+export function cloudDeleteTrade(uid: string, tradeId: string): Promise<void> {
+  return withCloudSyncTracking(async () => {
   const cleanId = sanitizeId(tradeId);
   const tradePath = `users/${uid}/trades/${cleanId}`;
   const tradeRef = doc(db, 'users', uid, 'trades', cleanId);
@@ -717,9 +776,11 @@ export async function cloudDeleteTrade(uid: string, tradeId: string): Promise<vo
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, tradePath);
   }
+  });
 }
 
-export async function cloudSaveModel(uid: string, model: TradingModel): Promise<void> {
+export function cloudSaveModel(uid: string, model: TradingModel): Promise<void> {
+  return withCloudSyncTracking(async () => {
   const payload = sanitizeModelPayload(uid, model);
   const path = `users/${uid}/models/${payload.id}`;
   const ref = doc(db, 'users', uid, 'models', payload.id);
@@ -750,9 +811,11 @@ export async function cloudSaveModel(uid: string, model: TradingModel): Promise<
   } catch (error) {
     handleFirestoreError(error, exists ? OperationType.UPDATE : OperationType.CREATE, path);
   }
+  });
 }
 
-export async function cloudDeleteModel(uid: string, modelId: string): Promise<void> {
+export function cloudDeleteModel(uid: string, modelId: string): Promise<void> {
+  return withCloudSyncTracking(async () => {
   const cleanId = sanitizeId(modelId);
   const path = `users/${uid}/models/${cleanId}`;
   try {
@@ -760,9 +823,11 @@ export async function cloudDeleteModel(uid: string, modelId: string): Promise<vo
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
+  });
 }
 
-export async function cloudSaveField(uid: string, field: CustomField): Promise<void> {
+export function cloudSaveField(uid: string, field: CustomField): Promise<void> {
+  return withCloudSyncTracking(async () => {
   const payload = sanitizeFieldPayload(uid, field);
   const path = `users/${uid}/customFields/${payload.id}`;
   const ref = doc(db, 'users', uid, 'customFields', payload.id);
@@ -794,9 +859,11 @@ export async function cloudSaveField(uid: string, field: CustomField): Promise<v
   } catch (error) {
     handleFirestoreError(error, exists ? OperationType.UPDATE : OperationType.CREATE, path);
   }
+  });
 }
 
-export async function cloudDeleteField(uid: string, fieldId: string): Promise<void> {
+export function cloudDeleteField(uid: string, fieldId: string): Promise<void> {
+  return withCloudSyncTracking(async () => {
   const cleanId = sanitizeId(fieldId);
   const path = `users/${uid}/customFields/${cleanId}`;
   try {
@@ -804,9 +871,11 @@ export async function cloudDeleteField(uid: string, fieldId: string): Promise<vo
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
+  });
 }
 
-export async function cloudSavePlaybook(uid: string, playbook: Playbook): Promise<void> {
+export function cloudSavePlaybook(uid: string, playbook: Playbook): Promise<void> {
+  return withCloudSyncTracking(async () => {
   const path = `users/${uid}`;
   try {
     await updateDoc(doc(db, 'users', uid), {
@@ -823,9 +892,11 @@ export async function cloudSavePlaybook(uid: string, playbook: Playbook): Promis
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
+  });
 }
 
-export async function cloudSaveProfile(uid: string, profile: UserProfile): Promise<void> {
+export function cloudSaveProfile(uid: string, profile: UserProfile): Promise<void> {
+  return withCloudSyncTracking(async () => {
   const path = `users/${uid}`;
   try {
     await updateDoc(doc(db, 'users', uid), {
@@ -839,13 +910,15 @@ export async function cloudSaveProfile(uid: string, profile: UserProfile): Promi
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
+  });
 }
 
-export async function cloudSaveAlarmsAndSettings(
+export function cloudSaveAlarmsAndSettings(
   uid: string,
   alarms: SessionAlarm[],
   settings: JournalSettings
 ): Promise<void> {
+  return withCloudSyncTracking(async () => {
   const userPath = `users/${uid}`;
   const freq = VALIDATION_LIMITS.quoteFrequencies.includes(settings.quoteFrequency)
     ? settings.quoteFrequency
@@ -927,9 +1000,11 @@ export async function cloudSaveAlarmsAndSettings(
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `users/${uid}/alarms`);
   }
+  });
 }
 
-export async function cloudReplaceFullJournal(uid: string, nextState: JournalState): Promise<void> {
+export function cloudReplaceFullJournal(uid: string, nextState: JournalState): Promise<void> {
+  return withCloudSyncTracking(async () => {
   const subcollections = [
     'tradeImages',
     'trades',
@@ -983,6 +1058,7 @@ export async function cloudReplaceFullJournal(uid: string, nextState: JournalSta
         defaultPnlUnit: wsFields.defaultPnlUnit,
         defaultRiskUnit: wsFields.defaultRiskUnit,
         currency: wsFields.currency,
+        glassTheme: wsFields.glassTheme,
         updatedAt: serverTimestamp(),
       });
     } else {
@@ -997,6 +1073,7 @@ export async function cloudReplaceFullJournal(uid: string, nextState: JournalSta
   }
 
   await writeSubcollectionsInBatches(uid, nextState);
+  });
 }
 
 export function subscribeToCloudJournal(
@@ -1298,7 +1375,8 @@ export function subscribeToCloudJournal(
   };
 }
 
-export async function cloudSaveAIMemory(uid: string, memory: AIMemoryItem): Promise<void> {
+export function cloudSaveAIMemory(uid: string, memory: AIMemoryItem): Promise<void> {
+  return withCloudSyncTracking(async () => {
   const payload = sanitizeAIMemoryPayload(uid, memory);
   const path = `users/${uid}/aiMemories/${payload.id}`;
   const ref = doc(db, 'users', uid, 'aiMemories', payload.id);
@@ -1327,9 +1405,11 @@ export async function cloudSaveAIMemory(uid: string, memory: AIMemoryItem): Prom
   } catch (error) {
     handleFirestoreError(error, exists ? OperationType.UPDATE : OperationType.CREATE, path);
   }
+  });
 }
 
-export async function cloudDeleteAIMemory(uid: string, memoryId: string): Promise<void> {
+export function cloudDeleteAIMemory(uid: string, memoryId: string): Promise<void> {
+  return withCloudSyncTracking(async () => {
   const cleanId = sanitizeId(memoryId);
   const path = `users/${uid}/aiMemories/${cleanId}`;
   try {
@@ -1337,6 +1417,7 @@ export async function cloudDeleteAIMemory(uid: string, memoryId: string): Promis
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
+  });
 }
 
 export function subscribeToCloudMemories(

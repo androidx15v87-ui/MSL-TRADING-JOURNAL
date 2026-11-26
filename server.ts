@@ -21,7 +21,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 3000);
-const APP_VERSION = '10.6.9';
+const APP_VERSION = '11.0.0';
 const FAST_MODEL_NAME = 'gemini-3.1-flash-lite';
 const HYDROGEN_MODEL_NAME = 'gemini-4-hydrogen';
 const TTS_MODEL_NAME = 'gemini-3.8-flash-lite-tts';
@@ -359,7 +359,13 @@ function shouldUseWebSearch(messages: IncomingMessage[], explicitWebSearch?: boo
 }
 
 function getAiClient(apiVersion?: 'v1alpha'): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const rawKey = (
+    process.env.GEMINI_API_KEY ||
+    process.env.API_KEY ||
+    process.env.GOOGLE_API_KEY ||
+    ''
+  ).trim();
+  const apiKey = rawKey && rawKey !== 'MY_GEMINI_API_KEY' ? rawKey : '';
   if (!apiKey) {
     return null;
   }
@@ -1173,33 +1179,54 @@ async function startServer() {
       }
     };
 
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')?.text || '';
+    const isComplexPrompt =
+      hasRecentImages ||
+      lastUserMsg.length > 220 ||
+      /\b(audit|analy[sz]e|breakdown|compare|explain|why|strategy|playbook|code|script|pine|mql|python|typescript|tilt|drawdown|edge|leak|stress[- ]?test|chart|liquidity|invalidat)\b/i.test(
+        lastUserMsg
+      );
+
     const baseCandidates: Array<{ model: string; level: ThinkingLevel; timeoutMs: number }> = isDeep
       ? [
           {
             model: HYDROGEN_MODEL_NAME,
             level: ThinkingLevel.MEDIUM,
-            timeoutMs: hasRecentImages ? 8500 : 5200,
+            timeoutMs: hasRecentImages ? 16000 : 12000,
           },
           {
             model: FAST_MODEL_NAME,
             level: ThinkingLevel.LOW,
-            timeoutMs: hasRecentImages ? 7500 : 4200,
+            timeoutMs: hasRecentImages ? 11000 : 8000,
+          },
+        ]
+      : isComplexPrompt
+      ? [
+          {
+            model: HYDROGEN_MODEL_NAME,
+            level: ThinkingLevel.LOW,
+            timeoutMs: hasRecentImages ? 11000 : 7000,
+          },
+          {
+            model: FAST_MODEL_NAME,
+            level: ThinkingLevel.MINIMAL,
+            timeoutMs: hasRecentImages ? 8500 : 5000,
           },
         ]
       : [
           {
             model: FAST_MODEL_NAME,
             level: ThinkingLevel.MINIMAL,
-            timeoutMs: hasRecentImages ? 5500 : 2600,
+            timeoutMs: hasRecentImages ? 8500 : 4500,
           },
           {
             model: HYDROGEN_MODEL_NAME,
             level: ThinkingLevel.LOW,
-            timeoutMs: hasRecentImages ? 7000 : 4500,
+            timeoutMs: hasRecentImages ? 10500 : 7500,
           },
         ];
 
-    const retryBackoffs = [0, 60, 180];
+    const retryBackoffs = [0, 50, 150];
 
     try {
       let activeModel = baseCandidates[0].model;
@@ -1236,7 +1263,21 @@ async function startServer() {
           const candidateCalls: FunctionCall[] = [];
           const candidateParts: Part[] = [];
 
+          let slowHintTimer: NodeJS.Timeout | undefined;
           try {
+            slowHintTimer = setTimeout(() => {
+              if (!candidateStreamed && candidateCalls.length === 0 && !res.writableEnded && !clientClosed) {
+                sendEvent({
+                  type: 'status',
+                  status: isDeep
+                    ? 'Deep reasoning across markets & journal…'
+                    : hasRecentImages
+                    ? 'Inspecting chart structure…'
+                    : 'Analyzing context…',
+                });
+              }
+            }, 1350);
+
             const stream1 = await withTimeout(
               ai.models.generateContentStream({
                 model: candidate.model,
@@ -1261,7 +1302,7 @@ async function startServer() {
               if (res.writableEnded || clientClosed) break;
               const nextResult = await withTimeout(
                 iterator.next(),
-                candidateStreamed || candidateCalls.length > 0 ? 12000 : candidate.timeoutMs,
+                candidateStreamed || candidateCalls.length > 0 ? 14000 : candidate.timeoutMs,
                 `${candidate.model} chunk`
               );
               if (nextResult.done) break;
@@ -1269,6 +1310,10 @@ async function startServer() {
               const chunk = nextResult.value;
               const text = chunk.text;
               if (text) {
+                if (slowHintTimer) {
+                  clearTimeout(slowHintTimer);
+                  slowHintTimer = undefined;
+                }
                 candidateStreamed += text;
                 streamedText += text;
                 pushDelta(text);
@@ -1325,6 +1370,10 @@ async function startServer() {
             succeeded = true;
             break;
           } catch (err) {
+            if (slowHintTimer) {
+              clearTimeout(slowHintTimer);
+              slowHintTimer = undefined;
+            }
             lastErr = err;
             if (!candidateStreamed && candidateCalls.length === 0 && isRetryableModelError(err)) {
               markModelCooldown(candidate.model, err);
@@ -1338,6 +1387,11 @@ async function startServer() {
               break;
             }
             throw err;
+          } finally {
+            if (slowHintTimer) {
+              clearTimeout(slowHintTimer);
+              slowHintTimer = undefined;
+            }
           }
         }
 
@@ -1428,7 +1482,7 @@ async function startServer() {
                     },
                   },
                 }),
-                4200,
+                8500,
                 `${activeModel} turn2`
               );
 

@@ -124,8 +124,18 @@ let lastDefaultRiskUnitCache: Trade['riskUnit'] = 'r';
 
 function promptNeedsFullSnapshot(prompt?: string): boolean {
   if (!prompt) return true;
-  return /\b(playbook|model|models|template|alarm|alarms|alert|month|monthly|6m|tag|tags|breakdown|audit|review|detailed|deep|every|all trades|history|log|update|delete|edit|session|setup|compare|pair|tilt|weekday|day of week|long|short)\b/i.test(
-    prompt
+  const trimmed = prompt.trim();
+  // Quick trade-logging or simple navigation commands only need the lean snapshot
+  if (
+    /^(log|record|enter|add|open|go to|switch to|navigate to|show me)\b/i.test(trimmed) &&
+    !/\b(audit|review|compare|analyze|analyse|breakdown|playbook|model|models|tilt|weekday|edge|leak|stress)\b/i.test(
+      trimmed
+    )
+  ) {
+    return false;
+  }
+  return /\b(playbook|model|models|template|alarm|alarms|alert|month|monthly|6m|tag|tags|breakdown|audit|review|detailed|deep|every|all trades|history|update|delete|edit|session|setup|compare|pair|tilt|weekday|day of week|long|short|edge|leak|expectancy)\b/i.test(
+    trimmed
   );
 }
 

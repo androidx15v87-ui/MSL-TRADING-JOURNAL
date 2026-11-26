@@ -339,6 +339,15 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(
                       <span>All accounts ({journals.length})</span>
                       <ArrowUpRight className="w-3.5 h-3.5 text-[#8ebeff]" />
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('ai')}
+                      className="min-h-[44px] inline-flex items-center justify-center gap-1.5 rounded-xl bg-white/[0.04] hover:bg-[#47dca0]/12 border border-white/[0.1] hover:border-[#47dca0]/40 px-4 py-2 text-xs sm:text-sm font-semibold text-[#dce5f4] hover:text-[#8df0c0] transition whitespace-nowrap shrink-0"
+                    >
+                      <Bot className="w-4 h-4 text-[#8df0c0]" />
+                      <span>Ask KAIROS</span>
+                    </button>
                   </div>
                 </div>
 
@@ -537,7 +546,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(
               </div>
             </section>
 
-            {/* Zone 2: 4-Column Deep Glassmorphism KPI Stat Strip */}
+            {/* Zone 2: 4 Core Stat Cards (Deep Fintech Glassmorphism) */}
             {activeJournal && (
               <motion.section
                 aria-label="Key performance indicators"
@@ -553,7 +562,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(
                       ? undefined
                       : { y: -2, transition: { duration: 0.16, ease: [0.16, 1, 0.3, 1] } }
                   }
-                  className={`rounded-2xl glass-stat-card p-5 flex flex-col justify-between gap-3.5 ${
+                  className={`rounded-2xl glass-stat-card p-5 flex flex-col justify-between gap-4 ${
                     stats.netR > 0
                       ? 'glass-stat-positive'
                       : stats.netR < 0
@@ -569,14 +578,14 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(
                           ? 'text-[#8df0c0]'
                           : stats.netR < 0
                           ? 'text-[#ffb4bf]'
-                          : 'text-[#7f8fa8]'
+                          : 'text-[#8b9ab0]'
                       }`}
                     >
                       {pnlStateText}
                     </span>
                   </div>
                   <p
-                    className={`font-mono text-2xl sm:text-3xl font-bold tracking-tight tabular-nums ${
+                    className={`font-mono text-2xl sm:text-3xl font-bold tracking-tight tabular-nums leading-none ${
                       stats.netR < 0
                         ? 'text-[#ff7d91]'
                         : stats.netR > 0
@@ -604,7 +613,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(
                       ? undefined
                       : { y: -2, transition: { duration: 0.16, ease: [0.16, 1, 0.3, 1] } }
                   }
-                  className={`rounded-2xl glass-stat-card p-5 flex flex-col justify-between gap-3.5 ${
+                  className={`rounded-2xl glass-stat-card p-5 flex flex-col justify-between gap-4 ${
                     stats.totalTrades > 0 && stats.winRate >= 50
                       ? 'glass-stat-positive'
                       : 'glass-stat-neutral'
@@ -612,12 +621,12 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(
                 >
                   <div className="flex items-baseline justify-between gap-2">
                     <p className="text-xs font-medium text-[#9aa8be]">Win rate</p>
-                    <span className="text-[11px] text-[#7f8fa8] tabular-nums">
-                      {stats.totalTrades} executed
+                    <span className="text-[11px] text-[#8b9ab0] tabular-nums">
+                      {stats.totalTrades} trades
                     </span>
                   </div>
                   <p
-                    className={`font-mono text-2xl sm:text-3xl font-bold tracking-tight tabular-nums ${
+                    className={`font-mono text-2xl sm:text-3xl font-bold tracking-tight tabular-nums leading-none ${
                       stats.totalTrades > 0 && stats.winRate >= 50
                         ? 'text-[#8df0c0]'
                         : 'text-[#eef3fb]'
@@ -644,7 +653,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(
                       ? undefined
                       : { y: -2, transition: { duration: 0.16, ease: [0.16, 1, 0.3, 1] } }
                   }
-                  className={`rounded-2xl glass-stat-card p-5 flex flex-col justify-between gap-3.5 ${
+                  className={`rounded-2xl glass-stat-card p-5 flex flex-col justify-between gap-4 ${
                     stats.totalTrades > 0 && stats.profitFactor >= 1.5
                       ? 'glass-stat-positive'
                       : stats.totalTrades > 0 && stats.profitFactor < 1
@@ -654,9 +663,17 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(
                 >
                   <div className="flex items-baseline justify-between gap-2">
                     <p className="text-xs font-medium text-[#9aa8be]">Profit factor</p>
-                    <span className="text-[11px] text-[#7f8fa8]">Gross ratio</span>
+                    <span className="text-[11px] text-[#8b9ab0]">Gross ratio</span>
                   </div>
-                  <p className="font-mono text-2xl sm:text-3xl font-bold tracking-tight tabular-nums text-[#eef3fb]">
+                  <p
+                    className={`font-mono text-2xl sm:text-3xl font-bold tracking-tight tabular-nums leading-none ${
+                      stats.totalTrades > 0 && stats.profitFactor >= 1.5
+                        ? 'text-[#8df0c0]'
+                        : stats.totalTrades > 0 && stats.profitFactor < 1
+                        ? 'text-[#ff7d91]'
+                        : 'text-[#eef3fb]'
+                    }`}
+                  >
                     {stats.totalTrades > 0 ? profitFactorLabel : '—'}
                   </p>
                   <div className="space-y-2.5">
@@ -684,16 +701,16 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(
                       ? undefined
                       : { y: -2, transition: { duration: 0.16, ease: [0.16, 1, 0.3, 1] } }
                   }
-                  className={`rounded-2xl glass-stat-card p-5 flex flex-col justify-between gap-3.5 ${
+                  className={`rounded-2xl glass-stat-card p-5 flex flex-col justify-between gap-4 ${
                     stats.maxDrawdownR > 0 ? 'glass-stat-negative' : 'glass-stat-neutral'
                   }`}
                 >
                   <div className="flex items-baseline justify-between gap-2">
                     <p className="text-xs font-medium text-[#9aa8be]">Max drawdown</p>
-                    <span className="text-[11px] text-[#7f8fa8]">{unitShort}</span>
+                    <span className="text-[11px] text-[#8b9ab0]">{unitShort}</span>
                   </div>
                   <p
-                    className={`font-mono text-2xl sm:text-3xl font-bold tracking-tight tabular-nums ${
+                    className={`font-mono text-2xl sm:text-3xl font-bold tracking-tight tabular-nums leading-none ${
                       stats.maxDrawdownR > 0 ? 'text-[#ff7d91]' : 'text-[#eef3fb]'
                     }`}
                   >

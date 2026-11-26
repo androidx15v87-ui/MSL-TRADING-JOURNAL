@@ -616,6 +616,62 @@ export default function App() {
     };
   }, [isLocked, showSplash]);
 
+  // Global keyboard shortcuts: Cmd/Ctrl+K opens KAIROS AI; N opens Log Trade modal outside inputs
+  useEffect(() => {
+    if (showSplash || isLocked) return;
+    const onGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      const target = e.target as HTMLElement | null;
+      const inEditable = Boolean(
+        target &&
+          (target.tagName === 'INPUT' ||
+            target.tagName === 'TEXTAREA' ||
+            target.tagName === 'SELECT' ||
+            target.isContentEditable)
+      );
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setAiMounted(true);
+        handleNavigate('ai');
+        window.setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('msl:focus-ai-input'));
+        }, 50);
+        return;
+      }
+
+      if (
+        !inEditable &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === 'n' &&
+        !tradeModalOpen &&
+        !journalModalOpen &&
+        !viewingTrade &&
+        !tradeToDelete &&
+        !journalToDelete
+      ) {
+        e.preventDefault();
+        setEditingTrade(null);
+        setDraftTemplate(null);
+        setModalInitialDate(undefined);
+        setTradeModalOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onGlobalKeyDown);
+    return () => window.removeEventListener('keydown', onGlobalKeyDown);
+  }, [
+    handleNavigate,
+    isLocked,
+    journalModalOpen,
+    journalToDelete,
+    showSplash,
+    tradeModalOpen,
+    tradeToDelete,
+    viewingTrade,
+  ]);
+
   // Silence active alert notifications & toasts immediately while logging a trade
   useEffect(() => {
     if (tradeModalOpen) {
@@ -1498,7 +1554,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `MSL-Journal-v10.6.9-backup-${isoDate(new Date())}.json`;
+    a.download = `MSL-Journal-v11.0.0-backup-${isoDate(new Date())}.json`;
     a.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     showToast('Full backup downloaded.');

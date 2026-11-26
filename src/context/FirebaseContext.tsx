@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
+import { subscribeCloudSyncActivity } from '../lib/cloudSync';
 import { auth, formatCloudErrorMessage, googleProvider } from '../lib/firebase';
 
 export type CloudSyncStatus = 'local' | 'connecting' | 'synced' | 'error';
@@ -9,6 +10,7 @@ interface FirebaseContextValue {
   authReady: boolean;
   authBusy: boolean;
   cloudStatus: CloudSyncStatus;
+  isSyncing: boolean;
   cloudError: string | null;
   setCloudStatus: (status: CloudSyncStatus) => void;
   setCloudError: (msg: string | null) => void;
@@ -23,7 +25,10 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [authReady, setAuthReady] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<CloudSyncStatus>('local');
+  const [cloudWriteActive, setCloudWriteActive] = useState(false);
   const [cloudError, setCloudError] = useState<string | null>(null);
+
+  useEffect(() => subscribeCloudSyncActivity(setCloudWriteActive), []);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (nextUser) => {
@@ -74,6 +79,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         authReady,
         authBusy,
         cloudStatus,
+        isSyncing: cloudStatus === 'connecting' || cloudWriteActive,
         cloudError,
         setCloudStatus,
         setCloudError,
