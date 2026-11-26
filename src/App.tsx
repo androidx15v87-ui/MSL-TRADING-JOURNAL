@@ -1554,7 +1554,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `MSL-Journal-v11.0.0-backup-${isoDate(new Date())}.json`;
+    a.download = `MSL-Journal-v11-backup-${isoDate(new Date())}.json`;
     a.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     showToast('Full backup downloaded.');

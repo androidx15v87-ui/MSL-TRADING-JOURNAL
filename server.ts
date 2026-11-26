@@ -21,7 +21,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 3000);
-const APP_VERSION = '11.0.0';
+const APP_VERSION = '11';
 const FAST_MODEL_NAME = 'gemini-3.1-flash-lite';
 const HYDROGEN_MODEL_NAME = 'gemini-4-hydrogen';
 const TTS_MODEL_NAME = 'gemini-3.8-flash-lite-tts';

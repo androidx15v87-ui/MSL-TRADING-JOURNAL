@@ -1,22 +1,53 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#0d1729" />
-      <stop offset="100%" stop-color="#080d18" />
+    <linearGradient id="bgGrad" x1="48" y1="24" x2="464" y2="488" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#111e36" />
+      <stop offset="55%" stop-color="#091120" />
+      <stop offset="100%" stop-color="#050912" />
     </linearGradient>
-    <linearGradient id="mint" x1="120" y1="120" x2="400" y2="400" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#8df0c0" />
+    <radialGradient id="emeraldGlow" cx="56%" cy="38%" r="54%">
+      <stop offset="0%" stop-color="#47dca0" stop-opacity="0.28" />
+      <stop offset="55%" stop-color="#8ebeff" stop-opacity="0.08" />
+      <stop offset="100%" stop-color="#050912" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="glassRim" x1="36" y1="36" x2="476" y2="476" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#8ebeff" stop-opacity="0.45" />
+      <stop offset="50%" stop-color="#47dca0" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="#8ebeff" stop-opacity="0.35" />
+    </linearGradient>
+    <linearGradient id="monogramGrad" x1="128" y1="360" x2="388" y2="148" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#d8ecff" />
+      <stop offset="48%" stop-color="#9fead4" />
       <stop offset="100%" stop-color="#47dca0" />
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#bg)" />
-  <rect x="20" y="20" width="472" height="472" rx="96" stroke="#1e2d45" stroke-width="4" />
-  <g stroke="url(#mint)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
-    <line x1="148" y1="350" x2="148" y2="236" />
-    <line x1="220" y1="350" x2="220" y2="176" />
-    <line x1="292" y1="350" x2="292" y2="216" />
-    <line x1="364" y1="350" x2="364" y2="146" />
-  </g>
-  <circle cx="364" cy="146" r="16" fill="#8df0c0" />
-  <path d="M132 168 L178 134 L224 156 L290 112" stroke="#8ebeff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" />
+
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#bgGrad)" />
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#emeraldGlow)" />
+  <rect x="20" y="20" width="472" height="472" rx="112" stroke="url(#glassRim)" stroke-width="5" />
+
+  <!-- Architectural M with ascending trajectory cut -->
+  <path
+    d="M148 358 V166 L256 268 L352 174"
+    stroke="url(#monogramGrad)"
+    stroke-width="32"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+  />
+  <path
+    d="M148 342 L206 286 L256 332 L322 268 V358"
+    stroke="url(#monogramGrad)"
+    stroke-width="28"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+  />
+  <path
+    d="M358 214 V358"
+    stroke="url(#monogramGrad)"
+    stroke-width="30"
+    stroke-linecap="square"
+  />
+
+  <!-- Apex Emerald Node -->
+  <circle cx="358" cy="166" r="22" fill="#5ce8ad" />
 </svg>

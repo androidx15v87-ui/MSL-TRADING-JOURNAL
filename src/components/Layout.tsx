@@ -129,15 +129,18 @@ export const Layout: React.FC<LayoutProps> = ({
               onClick={() => handleSelectPage('dashboard')}
               className="flex items-center gap-2.5 text-left min-w-0 group"
             >
-              <span className="h-9 w-9 shrink-0 rounded-xl border border-white/20 bg-gradient-to-br from-[#235458]/95 to-[#0a1829]/95 flex items-center justify-center font-display text-xs font-extrabold tracking-tight text-[#8df0c0] shadow-[inset_0_1px_0_rgba(255,255,255,0.28)]">
-                MSL
-              </span>
+              <img
+                src="/pwa-192x192.png"
+                alt="MSL Journal"
+                referrerPolicy="no-referrer"
+                className="h-9 w-9 shrink-0 rounded-xl border border-white/15 object-cover shadow-[0_4px_14px_rgba(0,0,0,0.45)]"
+              />
               <span className="min-w-0">
                 <span className="block font-display text-sm sm:text-base font-extrabold tracking-tight text-[#eef3fb] whitespace-nowrap">
                   MSL Journal
                 </span>
                 <span className="block text-[10px] sm:text-[11px] font-medium text-[#7f8fa8] truncate tabular-nums">
-                  {displayName ? `${displayName} · Version 11.0.0` : 'Version 11.0.0'}
+                  {displayName ? `${displayName} · Version 11` : 'Version 11'}
                 </span>
               </span>
             </button>

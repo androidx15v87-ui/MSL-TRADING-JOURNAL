@@ -1173,7 +1173,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-xs tabular-nums shrink-0">
-          <span className="font-semibold text-[#8df0c0]">Version 11.0.0</span>
+          <span className="font-semibold text-[#8df0c0]">Version 11</span>
           <span aria-hidden="true" className="text-[#56647c]">·</span>
           <span className="font-semibold text-[#eef3fb]">Developed by ANDROID</span>
         </div>
