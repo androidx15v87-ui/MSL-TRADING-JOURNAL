@@ -857,7 +857,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(
                             dataKey="netR"
                             radius={[6, 6, 0, 0]}
                             maxBarSize={38}
-                            animationDuration={220}
+                            isAnimationActive={false}
                           >
                             {monthlyPnL.map((entry) => (
                               <Cell
@@ -878,7 +878,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = React.memo(
                             dataKey="cumulativeR"
                             stroke="#8ebeff"
                             strokeWidth={2.4}
-                            animationDuration={220}
+                            isAnimationActive={false}
                             dot={{ r: 3.5, fill: '#8ebeff', strokeWidth: 0 }}
                             activeDot={{ r: 5, fill: '#eef3fb' }}
                           />

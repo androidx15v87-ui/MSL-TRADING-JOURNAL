@@ -443,18 +443,18 @@ export const AppLockScreen: React.FC<AppLockScreenProps> = ({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0, scale: 1.02 }}
-      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-      className="fixed inset-0 z-[95] w-screen h-dvh flex flex-col justify-between bg-[#060a14]/92 backdrop-blur-2xl px-6 py-6 pt-safe pb-safe overflow-y-auto select-none"
+      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+      className="fixed inset-0 z-[95] w-screen h-dvh flex flex-col justify-between bg-[#060a14] px-6 py-6 pt-safe pb-safe overflow-y-auto select-none"
     >
-      {/* Subtle Ambient Glow */}
+      {/* Subtle Ambient Glow (GPU-light radial gradient without blur filter) */}
       <div aria-hidden="true" className="pointer-events-none fixed inset-0 overflow-hidden">
         <div
-          className={`absolute -top-40 left-1/2 -translate-x-1/2 h-[520px] w-[760px] rounded-full blur-3xl transition-colors duration-300 ${
+          className={`absolute -top-40 left-1/2 -translate-x-1/2 h-[520px] w-[760px] rounded-full transition-colors duration-300 ${
             unlockedSuccess
-              ? 'bg-[radial-gradient(circle,rgba(71,220,160,0.28)_0%,transparent_70%)]'
+              ? 'bg-[radial-gradient(circle,rgba(71,220,160,0.24)_0%,transparent_70%)]'
               : errorMsg || cooldownSec > 0
-              ? 'bg-[radial-gradient(circle,rgba(255,125,145,0.2)_0%,transparent_70%)]'
-              : 'bg-[radial-gradient(circle,rgba(71,220,160,0.14)_0%,rgba(142,190,255,0.08)_48%,transparent_72%)]'
+              ? 'bg-[radial-gradient(circle,rgba(255,125,145,0.18)_0%,transparent_70%)]'
+              : 'bg-[radial-gradient(circle,rgba(71,220,160,0.13)_0%,rgba(142,190,255,0.07)_48%,transparent_72%)]'
           }`}
         />
       </div>

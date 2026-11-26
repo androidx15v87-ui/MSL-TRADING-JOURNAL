@@ -29,7 +29,7 @@ export const EntrySplash: React.FC<EntrySplashProps> = ({
             : { opacity: [0.16, 0.46, 0.32], scale: [0.85, 1.08, 1] }
         }
         transition={{ duration: durationMs / 1000, ease: 'easeInOut' }}
-        className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-[440px] w-[440px] rounded-full bg-[radial-gradient(circle,rgba(71,220,160,0.20)_0%,rgba(142,190,255,0.08)_46%,transparent_72%)] blur-3xl"
+        className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-[420px] w-[420px] rounded-full bg-[radial-gradient(circle,rgba(71,220,160,0.18)_0%,rgba(142,190,255,0.07)_46%,transparent_72%)]"
       />
 
       {/* Minimalist Center Stage (No Card Box, No Grids) */}
@@ -42,15 +42,15 @@ export const EntrySplash: React.FC<EntrySplashProps> = ({
                 initial={
                   shouldReduceMotion
                     ? { opacity: 1 }
-                    : { opacity: 0, y: 8, filter: 'blur(4px)' }
+                    : { opacity: 0, y: 8 }
                 }
-                animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                animate={{ opacity: 1, y: 0 }}
                 exit={
                   shouldReduceMotion
                     ? { opacity: 0 }
-                    : { opacity: 0, y: -8, filter: 'blur(4px)' }
+                    : { opacity: 0, y: -8 }
                 }
-                transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+                transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
                 className="flex flex-col items-center gap-4"
               >
                 {/* Clean Hairline Monogram */}
@@ -107,11 +107,11 @@ export const EntrySplash: React.FC<EntrySplashProps> = ({
                 initial={
                   shouldReduceMotion
                     ? { opacity: 1 }
-                    : { opacity: 0, y: 10, filter: 'blur(4px)' }
+                    : { opacity: 0, y: 10 }
                 }
-                animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+                transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
                 className="flex flex-col items-center gap-2"
               >
                 <p className="font-display text-xl sm:text-2xl font-bold tracking-tight text-[#eef3fb] leading-snug [text-wrap:balance]">

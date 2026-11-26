@@ -287,6 +287,7 @@ export default function App() {
   const toastIsAlertRef = useRef<boolean>(false);
   const lastAlarmKeyRef = useRef<string>('');
   const splashStartRef = useRef<number>(Date.now());
+  const cloudPersistTimerRef = useRef<number | null>(null);
   const stateRef = useRef<JournalState>(state);
   stateRef.current = state;
   const memoriesRef = useRef<AIMemoryItem[]>(memories);
@@ -367,28 +368,19 @@ export default function App() {
     };
   }, [showToast]);
 
-  // Warm up all lazy screen chunks immediately during splash so every tab switch is 0ms
   useEffect(() => {
     if (!hydrated) return;
     if (activePage === 'ai') setAiMounted(true);
   }, [activePage, hydrated]);
 
+  // Gently warm AI endpoint only after splash & lock clear so startup stays 0-lag on mobile
   useEffect(() => {
-    if (!hydrated) return;
-    // Warm up /api/health + upstream Gemini TLS connection & lazy screen chunks during splash
-    void fetch('/api/health?warm=1', { keepalive: true }).catch(() => {});
+    if (!hydrated || showSplash || isLocked) return;
     const timer = window.setTimeout(() => {
-      void import('./screens/JournalsScreen');
-      void import('./screens/JournalScreen');
-      void import('./screens/CalendarScreen');
-      void import('./screens/ModelsScreen');
-      void import('./screens/AnalyticsScreen');
-      void import('./screens/PlaybookScreen');
-      void import('./screens/AIScreen');
-      void import('./screens/SettingsScreen');
-    }, 80);
+      void fetch('/api/health?warm=1', { keepalive: true }).catch(() => {});
+    }, 1000);
     return () => window.clearTimeout(timer);
-  }, [hydrated]);
+  }, [hydrated, isLocked, showSplash]);
 
   // Attach real-time Cloud Firestore workspace & sync when authenticated + hydrated
   useEffect(() => {
@@ -502,7 +494,14 @@ export default function App() {
             syncNativeAlarms(mergedState.alarms);
             setCloudStatus('synced');
             setCloudError(null);
-            void saveFullJournalState(mergedState, user.uid).catch(() => {});
+            if (cloudPersistTimerRef.current !== null) {
+              window.clearTimeout(cloudPersistTimerRef.current);
+            }
+            const uidForSave = user.uid;
+            cloudPersistTimerRef.current = window.setTimeout(() => {
+              cloudPersistTimerRef.current = null;
+              void saveFullJournalState(mergedState, uidForSave).catch(() => {});
+            }, 1200);
           },
           (err) => {
             if (cancelled) return;
@@ -546,6 +545,10 @@ export default function App() {
 
     return () => {
       cancelled = true;
+      if (cloudPersistTimerRef.current !== null) {
+        window.clearTimeout(cloudPersistTimerRef.current);
+        cloudPersistTimerRef.current = null;
+      }
       if (unsub) unsub();
       if (unsubMemories) unsubMemories();
     };
@@ -689,9 +692,9 @@ export default function App() {
     }
   }, [tradeModalOpen]);
 
-  // Background session alarms & quote reminder ticker (auto-snoozes during trade logging)
+  // Background session alarms & quote reminder ticker (starts after entry splash to keep startup fast)
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || showSplash) return;
 
     const runCheck = async () => {
       const res = await evaluateAlarmsAndQuotes(
@@ -714,10 +717,12 @@ export default function App() {
       }
     };
 
-    runCheck();
-    const interval = window.setInterval(runCheck, 10000);
+    void runCheck();
+    const interval = window.setInterval(() => {
+      void runCheck();
+    }, 15000);
     const onFocusOrVisible = () => {
-      if (!document.hidden) runCheck();
+      if (!document.hidden) void runCheck();
     };
 
     window.addEventListener('focus', onFocusOrVisible);
@@ -728,7 +733,7 @@ export default function App() {
       window.removeEventListener('focus', onFocusOrVisible);
       document.removeEventListener('visibilitychange', onFocusOrVisible);
     };
-  }, [hydrated, state.alarms, state.settings, showToast, tradeModalOpen]);
+  }, [hydrated, showSplash, state.alarms, state.settings, showToast, tradeModalOpen]);
 
   const handleSelectJournal = useCallback((journalId: string) => {
     const exists = (stateRef.current.journals || []).some(
@@ -1702,10 +1707,12 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Only mount main workspace & charts once splash and lock screen clear (prevents mobile GPU OOM) */}
+      {!showSplash && !isLocked && (
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
       >
         <Layout
           activePage={activePage}
@@ -1871,6 +1878,7 @@ export default function App() {
           )}
         </Layout>
       </motion.div>
+      )}
 
       {/* Create / Edit Journal Modal */}
       <JournalModal
