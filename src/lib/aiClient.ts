@@ -115,6 +115,7 @@ export function scheduleSaveAIConversations(conversations: AIConversation[], del
 
 let lastCtxStateRef: JournalState | null = null;
 let lastCtxMemoriesRef: AIMemoryItem[] | undefined = undefined;
+let lastCtxDateStr = '';
 let lastLeanCtxValue = '';
 let lastFullCtxValue = '';
 let lastSortedTradesCache: Trade[] = [];
@@ -122,21 +123,36 @@ let lastDefaultUnitCache: Trade['pnlUnit'] = 'r';
 let lastDefaultCurrCache = 'R';
 let lastDefaultRiskUnitCache: Trade['riskUnit'] = 'r';
 
+function getLocalIsoDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function promptNeedsFullSnapshot(prompt?: string): boolean {
   if (!prompt) return true;
   const trimmed = prompt.trim();
-  // Quick trade-logging or simple navigation commands only need the lean snapshot
+  // Pure micro-greetings/acks don't need full analytics payload
   if (
-    /^(log|record|enter|add|open|go to|switch to|navigate to|show me)\b/i.test(trimmed) &&
-    !/\b(audit|review|compare|analyze|analyse|breakdown|playbook|model|models|tilt|weekday|edge|leak|stress)\b/i.test(
+    trimmed.length <= 28 &&
+    /^(hi|hey|hello|yo|thanks|thank you|thx|ok|okay|cool|nice|got it|morning|evening)[!.]*$/i.test(
       trimmed
     )
   ) {
     return false;
   }
-  return /\b(playbook|model|models|template|alarm|alarms|alert|month|monthly|6m|tag|tags|breakdown|audit|review|detailed|deep|every|all trades|history|update|delete|edit|session|setup|compare|pair|tilt|weekday|day of week|long|short|edge|leak|expectancy)\b/i.test(
-    trimmed
-  );
+  // Pure imperative navigation or instant trade-log commands without analytical intent only need the lean snapshot
+  if (
+    /^(log|record|enter|open|go to|switch to|navigate to|take me to)\b/i.test(trimmed) &&
+    !trimmed.includes('?') &&
+    !/\b(why|how|what|audit|review|compare|analy[sz]e|breakdown|playbook|model|models|tilt|weekday|edge|leak|stress|improve|fix|coach|advice|drawdown|loss|losing|win rate|stats|performance)\b/i.test(
+      trimmed
+    )
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function summarizeGroupQuant(
@@ -183,30 +199,39 @@ function findMatchingTrades(
     'the', 'and', 'for', 'with', 'that', 'this', 'what', 'when', 'where', 'which', 'how', 'why',
     'are', 'was', 'were', 'have', 'has', 'had', 'from', 'into', 'about', 'can', 'you', 'my',
     'your', 'show', 'give', 'tell', 'trade', 'trades', 'audit', 'review', 'best', 'worst',
-    'all', 'last', 'recent', 'today', 'week', 'month', 'pnl', 'risk', 'rate', 'win',
+    'all', 'last', 'recent', 'pnl', 'risk', 'rate', 'should', 'could', 'would', 'improve', 'fix',
   ]);
-  const tokens = cleanPrompt
-    .split(/[^a-z0-9$%+-]+/i)
-    .map((tok) => tok.trim())
-    .filter((tok) => tok.length >= 2 && !stopWords.has(tok));
+  const tokens = Array.from(
+    new Set(
+      cleanPrompt
+        .split(/[^a-z0-9$%+-]+/i)
+        .map((tok) => tok.trim())
+        .filter((tok) => tok.length >= 2 && !stopWords.has(tok))
+    )
+  );
 
   if (tokens.length === 0) return '';
 
   const shownIds = new Set(sortedTrades.slice(0, alreadyShownCount).map((t) => t.id));
-  const matches: Trade[] = [];
+  const scored: Array<{ trade: Trade; score: number }> = [];
   for (const t of sortedTrades) {
     if (shownIds.has(t.id)) continue;
     const haystack = `${t.id} ${t.pair} ${t.direction} ${t.setup} ${t.session} ${t.result} ${t.model || ''} ${(t.tags || []).join(' ')} ${t.notes || ''} ${t.date}`.toLowerCase();
-    if (tokens.some((tok) => haystack.includes(tok))) {
-      matches.push(t);
-      if (matches.length >= 8) break;
+    let score = 0;
+    for (const tok of tokens) {
+      if (haystack.includes(tok)) score += 1;
+    }
+    if (score > 0) {
+      scored.push({ trade: t, score });
     }
   }
 
-  if (matches.length === 0) return '';
+  if (scored.length === 0) return '';
+  scored.sort((a, b) => b.score - a.score || b.trade.date.localeCompare(a.trade.date));
+  const matches = scored.slice(0, 10).map((s) => s.trade);
   const rows = matches.map((t) => {
     const tagsStr = t.tags && t.tags.length > 0 ? t.tags.join(',') : '';
-    return `- ${t.id} | ${t.date} | ${t.pair} ${t.direction} | ${t.setup}/${t.session} | ${t.result} ${formatTradePnL(t, defaultUnit, defaultCurr)} (risk ${formatTradeRisk(t, defaultRiskUnit, defaultCurr)})${t.model ? ` | model:${t.model}` : ''}${tagsStr ? ` | tags:[${tagsStr}]` : ''}${t.notes ? ` | "${t.notes.slice(0, 50)}"` : ''}`;
+    return `- ${t.id} | ${t.date} | ${t.pair} ${t.direction} | ${t.setup}/${t.session} | ${t.result} ${formatTradePnL(t, defaultUnit, defaultCurr)} (risk ${formatTradeRisk(t, defaultRiskUnit, defaultCurr)})${t.model ? ` | model:${t.model}` : ''}${tagsStr ? ` | tags:[${tagsStr}]` : ''}${t.notes ? ` | "${t.notes.slice(0, 60)}"` : ''}`;
   });
   return `Query-Matched Historical Trades (${matches.length}):\n${rows.join('\n')}`;
 }
@@ -217,14 +242,16 @@ export function buildJournalContext(
   options?: { mode?: 'fast' | 'deep'; prompt?: string }
 ): string {
   const useFull = options?.mode === 'deep' || promptNeedsFullSnapshot(options?.prompt);
+  const now = new Date();
+  const todayIso = getLocalIsoDate(now);
 
-  if (lastCtxStateRef === state && lastCtxMemoriesRef === memories) {
+  if (lastCtxStateRef === state && lastCtxMemoriesRef === memories && lastCtxDateStr === todayIso) {
     const base = useFull ? lastFullCtxValue : lastLeanCtxValue;
     if (base) {
       const matched = findMatchingTrades(
         lastSortedTradesCache,
         options?.prompt,
-        useFull ? 8 : 4,
+        useFull ? 10 : 4,
         lastDefaultUnitCache || 'r',
         lastDefaultRiskUnitCache || 'r',
         lastDefaultCurrCache
@@ -300,8 +327,16 @@ export function buildJournalContext(
         return ` | Active Journal: ${activeJournal.name} (${parts.join(', ')})`;
       })()
     : ' | Active Journal: None';
-  const traderLine = `Trader: ${state.profile.name || 'Trader'}${journalScopeInfo} | Market: ${state.profile.market || 'Unspecified'} | Default Units: P&L=${getUnitShortLabel(defaultUnit, defaultCurr)}, Risk=${getUnitShortLabel(defaultRiskUnit, defaultCurr)}`;
-  const statsLine = `Total PnL & Stats (${getUnitShortLabel(activeUnit, activeCurr)}): Net PnL ${fmt(stats.netR)} | Total Profits +${fmtAbs(stats.grossWin)} | Total Losses -${fmtAbs(stats.grossLoss)} | ${stats.totalTrades} executed (${stats.missed.length} missed) | WR ${stats.winRate.toFixed(1)}% (${stats.wins.length}W/${stats.losses.length}L/${stats.breakevens.length}BE/${stats.missed.length}Missed) | Exp ${fmt(stats.expectancy)} | PF ${stats.profitFactor === Infinity ? '∞' : stats.profitFactor.toFixed(2)} | AvgW ${fmt(stats.avgWinner)} | AvgL ${fmt(stats.avgLoser)} | MaxDD -${fmtAbs(stats.maxDrawdownR)} | Best Session ${stats.bestSession ? `${stats.bestSession.name} (${fmt(stats.bestSession.netR)})` : 'None'}`;
+  const weekdayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const payoffRatio =
+    Math.abs(stats.avgLoser) > 0.0001
+      ? `${(stats.avgWinner / Math.abs(stats.avgLoser)).toFixed(2)}:1`
+      : stats.avgWinner > 0
+      ? '∞'
+      : '0.00:1';
+
+  const traderLine = `Date: ${todayIso} (${weekdayNames[now.getDay()]}) | Trader: ${state.profile.name || 'Trader'}${journalScopeInfo} | Market: ${state.profile.market || 'Unspecified'} | Default Units: P&L=${getUnitShortLabel(defaultUnit, defaultCurr)}, Risk=${getUnitShortLabel(defaultRiskUnit, defaultCurr)}`;
+  const statsLine = `Total PnL & Stats (${getUnitShortLabel(activeUnit, activeCurr)}): Net PnL ${fmt(stats.netR)} | Total Profits +${fmtAbs(stats.grossWin)} | Total Losses -${fmtAbs(stats.grossLoss)} | ${stats.totalTrades} executed (${stats.missed.length} missed) | WR ${stats.winRate.toFixed(1)}% (${stats.wins.length}W/${stats.losses.length}L/${stats.breakevens.length}BE/${stats.missed.length}Missed) | Exp ${fmt(stats.expectancy)} | PF ${stats.profitFactor === Infinity ? '∞' : stats.profitFactor.toFixed(2)} | Payoff ${payoffRatio} | AvgW ${fmt(stats.avgWinner)} | AvgL ${fmt(stats.avgLoser)} | MaxDD -${fmtAbs(stats.maxDrawdownR)} | Best Session ${stats.bestSession ? `${stats.bestSession.name} (${fmt(stats.bestSession.netR)})` : 'None'}`;
   const memoryBlock = memoryLines.length
     ? `Saved User Memories (${memoryLines.length}):\n${memoryLines.join('\n')}`
     : '';
@@ -320,15 +355,28 @@ export function buildJournalContext(
   const bySetup = groupPerformance(state.trades, 'setup', unitFilter);
   const bySession = groupPerformance(state.trades, 'session', unitFilter);
   const byTag = groupPerformanceByTag(state.trades, unitFilter);
-  const monthly = calculateMonthlyPnL(state.trades, 6, new Date(), unitFilter);
-  const fullTrades = sortedTrades.slice(0, 8).map(formatTradeRow);
+  const monthly = calculateMonthlyPnL(state.trades, 6, now, unitFilter);
+  const fullTrades = sortedTrades.slice(0, 10).map(formatTradeRow);
 
-  // Quantitative edges: Pair, Direction, Model, Post-Loss Tilt, Weekday bias, Missed opportunity
+  // Quantitative edges: Pair, Direction, Model, Pair×Session combos, Post-Loss Tilt, Risk Creep, Streaks, Today/7D pulse
   const byPair = summarizeGroupQuant(state.trades, (t) => t.pair.toUpperCase(), unitFilter).slice(0, 6);
   const byDirection = summarizeGroupQuant(state.trades, (t) => t.direction, unitFilter);
   const byModel = summarizeGroupQuant(state.trades, (t) => t.model || '', unitFilter).slice(0, 6);
 
-  const weekdayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const byPairSession = summarizeGroupQuant(
+    state.trades,
+    (t) => `${t.pair.toUpperCase()} ${t.session}`,
+    unitFilter
+  ).filter((g) => g.count >= 2);
+  const topCombos = [...byPairSession]
+    .sort((a, b) => b.netR - a.netR)
+    .slice(0, 3)
+    .filter((g) => g.netR > 0);
+  const leakCombos = [...byPairSession]
+    .sort((a, b) => a.netR - b.netR)
+    .slice(0, 3)
+    .filter((g) => g.netR < 0);
+
   const byWeekday = summarizeGroupQuant(
     state.trades,
     (t) => {
@@ -338,7 +386,38 @@ export function buildJournalContext(
     unitFilter
   ).sort((a, b) => b.netR - a.netR);
 
-  // Chronological Post-Loss Tilt vs Post-Win momentum
+  // Today & Last 7 Days pulse
+  const sevenDaysAgo = new Date(now);
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+  const sevenDaysIso = getLocalIsoDate(sevenDaysAgo);
+  let todayCount = 0;
+  let todayWins = 0;
+  let todayNet = 0;
+  let weekCount = 0;
+  let weekWins = 0;
+  let weekNet = 0;
+  for (const t of state.trades) {
+    if (t.result === 'Missed') continue;
+    if (unitFilter && normalizeMetricUnit(t.pnlUnit, 'r') !== unitFilter) continue;
+    const dStr = t.date.slice(0, 10);
+    const val = Number(t.r || 0);
+    if (dStr === todayIso) {
+      todayCount += 1;
+      if (t.result === 'Win') todayWins += 1;
+      todayNet += val;
+    }
+    if (dStr >= sevenDaysIso && dStr <= todayIso) {
+      weekCount += 1;
+      if (t.result === 'Win') weekWins += 1;
+      weekNet += val;
+    }
+  }
+  const pulseLine =
+    state.trades.length > 0
+      ? `Recent Pulse: Today ${todayCount}T (${todayWins}W, ${fmt(todayNet)}) | Last 7D ${weekCount}T (${weekCount > 0 ? Math.round((weekWins / weekCount) * 100) : 0}% WR, ${fmt(weekNet)})`
+      : '';
+
+  // Chronological Post-Loss Tilt, Streaks, and Risk Creep
   const chronoExecuted = [...sortedTrades].reverse().filter((t) => t.result !== 'Missed');
   let afterLossCount = 0;
   let afterLossWins = 0;
@@ -346,21 +425,68 @@ export function buildJournalContext(
   let afterWinCount = 0;
   let afterWinWins = 0;
   let afterWinNet = 0;
-  for (let i = 1; i < chronoExecuted.length; i++) {
-    const prev = chronoExecuted[i - 1];
+  let maxWinStreak = 0;
+  let maxLossStreak = 0;
+  let curWinStreak = 0;
+  let curLossStreak = 0;
+  let lossRiskSum = 0;
+  let lossRiskN = 0;
+  let winRiskSum = 0;
+  let winRiskN = 0;
+
+  for (let i = 0; i < chronoExecuted.length; i++) {
     const curr = chronoExecuted[i];
-    if (unitFilter && normalizeMetricUnit(curr.pnlUnit, 'r') !== unitFilter) continue;
-    const pnl = Number(curr.r || 0);
-    if (prev.result === 'Loss') {
-      afterLossCount += 1;
-      if (curr.result === 'Win') afterLossWins += 1;
-      afterLossNet += pnl;
-    } else if (prev.result === 'Win') {
-      afterWinCount += 1;
-      if (curr.result === 'Win') afterWinWins += 1;
-      afterWinNet += pnl;
+    if (curr.result === 'Win') {
+      curWinStreak += 1;
+      curLossStreak = 0;
+      if (curWinStreak > maxWinStreak) maxWinStreak = curWinStreak;
+      if (Number(curr.risk || 0) > 0) {
+        winRiskSum += Number(curr.risk);
+        winRiskN += 1;
+      }
+    } else if (curr.result === 'Loss') {
+      curLossStreak += 1;
+      curWinStreak = 0;
+      if (curLossStreak > maxLossStreak) maxLossStreak = curLossStreak;
+      if (Number(curr.risk || 0) > 0) {
+        lossRiskSum += Number(curr.risk);
+        lossRiskN += 1;
+      }
+    }
+
+    if (i > 0) {
+      const prev = chronoExecuted[i - 1];
+      if (unitFilter && normalizeMetricUnit(curr.pnlUnit, 'r') !== unitFilter) continue;
+      const pnl = Number(curr.r || 0);
+      if (prev.result === 'Loss') {
+        afterLossCount += 1;
+        if (curr.result === 'Win') afterLossWins += 1;
+        afterLossNet += pnl;
+      } else if (prev.result === 'Win') {
+        afterWinCount += 1;
+        if (curr.result === 'Win') afterWinWins += 1;
+        afterWinNet += pnl;
+      }
     }
   }
+
+  const currentStreakLabel =
+    curWinStreak > 0 ? `${curWinStreak}W` : curLossStreak > 0 ? `${curLossStreak}L` : 'Flat';
+  const streaksLine =
+    chronoExecuted.length >= 2
+      ? `Streaks: Current ${currentStreakLabel} | MaxWin ${maxWinStreak}W | MaxLoss ${maxLossStreak}L`
+      : '';
+  const riskCreepLine =
+    winRiskN >= 2 && lossRiskN >= 2
+      ? (() => {
+          const avgWinRisk = winRiskSum / winRiskN;
+          const avgLossRisk = lossRiskSum / lossRiskN;
+          const diffPct = avgWinRisk > 0 ? ((avgLossRisk - avgWinRisk) / avgWinRisk) * 100 : 0;
+          return `Sizing Discipline (Risk Taken): Avg risk staked on Wins=${avgWinRisk.toFixed(2)} vs Losses=${avgLossRisk.toFixed(2)}${
+            diffPct >= 15 ? ` (ALERT: staking +${Math.round(diffPct)}% larger position risk on losing trades)` : ''
+          }`;
+        })()
+      : '';
   const tiltLine =
     afterLossCount >= 2
       ? `Post-Loss Tilt: After Loss ${fmt(afterLossNet)} (${afterLossCount} trades, ${Math.round((afterLossWins / afterLossCount) * 100)}% WR)${
@@ -401,7 +527,10 @@ export function buildJournalContext(
     memoryBlock,
     traderLine,
     statsLine,
+    pulseLine,
     unitBreakdownLine,
+    streaksLine,
+    riskCreepLine,
     missedLine,
     tiltLine,
     byDirection.length
@@ -409,6 +538,12 @@ export function buildJournalContext(
       : '',
     byPair.length
       ? `Top Pairs: ${byPair.map((p) => `${p.label}:${fmt(p.netR)}(${p.count},${Math.round(p.winRate)}%)`).join(' | ')}`
+      : '',
+    topCombos.length
+      ? `Top Pair×Session Combos: ${topCombos.map((c) => `${c.label}:${fmt(c.netR)}(${c.count},${Math.round(c.winRate)}%)`).join(' | ')}`
+      : '',
+    leakCombos.length
+      ? `Weakest Pair×Session Leaks: ${leakCombos.map((c) => `${c.label}:${fmt(c.netR)}(${c.count},${Math.round(c.winRate)}%)`).join(' | ')}`
       : '',
     byModel.length
       ? `Models Edge: ${byModel.map((m) => `${m.label}:${fmt(m.netR)}(${m.count},${Math.round(m.winRate)}%)`).join(' | ')}`
@@ -436,6 +571,7 @@ export function buildJournalContext(
 
   lastCtxStateRef = state;
   lastCtxMemoriesRef = memories;
+  lastCtxDateStr = todayIso;
   lastLeanCtxValue = leanValue;
   lastFullCtxValue = fullValue;
   lastSortedTradesCache = sortedTrades;
@@ -447,7 +583,7 @@ export function buildJournalContext(
   const matched = findMatchingTrades(
     sortedTrades,
     options?.prompt,
-    useFull ? 8 : 4,
+    useFull ? 10 : 4,
     defaultUnit,
     defaultRiskUnit,
     defaultCurr
@@ -560,9 +696,9 @@ export async function streamAIChat(options: {
   const mode = options.mode || 'fast';
   const webSearch = Boolean(options.webSearch);
   const speakSync = Boolean(options.speakSync);
-  const maxClientMsgs = mode === 'fast' ? 6 : 10;
+  const maxClientMsgs = mode === 'fast' ? 8 : 12;
   const keepImagesLastN = mode === 'deep' ? 2 : 1;
-  const maxOlderTextChars = mode === 'deep' ? 1800 : 900;
+  const maxOlderTextChars = mode === 'deep' ? 1800 : 1000;
 
   const sourceMessages =
     options.messages.length > maxClientMsgs

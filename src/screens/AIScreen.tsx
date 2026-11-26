@@ -1083,21 +1083,45 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
       const controller = new AbortController();
       abortRef.current = controller;
 
-      const scheduleRafFlush = () => {
-        if (rafIdRef.current !== null) return;
-        rafIdRef.current = window.requestAnimationFrame(() => {
-          rafIdRef.current = null;
-          setLiveStream({
-            convId,
-            msgId: assistantMsgId,
-            text: streamTextRef.current,
-            actions: [...streamActionsRef.current],
-            sources: [...streamSourcesRef.current],
-          });
+      let flushTimerId: number | null = null;
+      let lastFlushAt = 0;
+
+      const doFlush = () => {
+        lastFlushAt = performance.now();
+        setLiveStream({
+          convId,
+          msgId: assistantMsgId,
+          text: streamTextRef.current,
+          actions: [...streamActionsRef.current],
+          sources: [...streamSourcesRef.current],
         });
       };
 
+      const scheduleRafFlush = () => {
+        if (rafIdRef.current !== null || flushTimerId !== null) return;
+        const elapsed = performance.now() - lastFlushAt;
+        const delay = elapsed >= 48 ? 0 : Math.max(16, 48 - elapsed);
+        if (delay === 0) {
+          rafIdRef.current = window.requestAnimationFrame(() => {
+            rafIdRef.current = null;
+            doFlush();
+          });
+        } else {
+          flushTimerId = window.setTimeout(() => {
+            flushTimerId = null;
+            rafIdRef.current = window.requestAnimationFrame(() => {
+              rafIdRef.current = null;
+              doFlush();
+            });
+          }, delay);
+        }
+      };
+
       const cancelRaf = () => {
+        if (flushTimerId !== null) {
+          window.clearTimeout(flushTimerId);
+          flushTimerId = null;
+        }
         if (rafIdRef.current !== null) {
           window.cancelAnimationFrame(rafIdRef.current);
           rafIdRef.current = null;
@@ -1141,13 +1165,7 @@ export const AIScreen: React.FC<AIScreenProps> = memo(({
             }
             if (wasEmpty) {
               cancelRaf();
-              setLiveStream({
-                convId,
-                msgId: assistantMsgId,
-                text: streamTextRef.current,
-                actions: [...streamActionsRef.current],
-                sources: [...streamSourcesRef.current],
-              });
+              doFlush();
             } else {
               scheduleRafFlush();
             }

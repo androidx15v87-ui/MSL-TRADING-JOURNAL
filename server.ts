@@ -266,8 +266,17 @@ function selectToolsForMessages(
   if (!text) return undefined;
 
   const picked = new Set<string>();
+  const isAnalyticalQuestion =
+    (/^(why|how|what|when|where|which|who|should|could|would|can you explain|analyze|analyse|audit|review|compare|diagnose)\b/.test(
+      text
+    ) ||
+      text.includes('?')) &&
+    !/\b(log trade|log a trade|log this trade|record trade|enter trade|delete trade|remove trade|update trade|edit trade|open log|save memory|forget memory|remember that|don't forget|never forget|check off|uncheck|reset checklist|set units|switch unit|navigate to|go to|take me to|open analytics|open journal|open calendar|open models|open playbook|open settings)\b/.test(
+      text
+    );
 
   if (
+    !isAnalyticalQuestion &&
     /\b(open|go to|switch|navigate|take me|show me|view|jump to)\b/.test(text) &&
     /\b(dashboard|overview|accounts|journals|journal|calendar|models|analytics|playbook|ai|settings|log trade|modal|screen|tab|page)\b/.test(
       text
@@ -279,8 +288,14 @@ function selectToolsForMessages(
     picked.add('open_log_trade_modal');
   }
 
+  const hasExplicitTradeMutation =
+    /\b(log|record|enter|delete|remove)\b/.test(text) ||
+    /\b(update|edit|modify|change|fix)\s+(?:the\s+|my\s+|this\s+|that\s+)?trade\b/.test(text) ||
+    /\b(add)\s+(?:a\s+|this\s+)?trade\b/.test(text);
+
   if (
-    /\b(log|record|enter|add|save|edit|update|modify|fix|change|delete|remove)\b/.test(text) &&
+    !isAnalyticalQuestion &&
+    hasExplicitTradeMutation &&
     /\b(trade|trades|position|entry|win|loss|be|missed|eurusd|xauusd|gbpusd|usdjpy|nas|nq|es|btc|eth|pair|r\b|\$|%)\b/.test(
       text
     )
@@ -292,6 +307,7 @@ function selectToolsForMessages(
   }
 
   if (
+    !isAnalyticalQuestion &&
     /\b(model|template|playbook|alarm|alert|reminder|quote|motivation)\b/.test(text) &&
     /\b(create|add|save|update|edit|change|set|enable|disable|turn|cycle|next|refresh|new)\b/.test(
       text
@@ -304,7 +320,7 @@ function selectToolsForMessages(
   }
 
   if (
-    /\b(remember|memorize|don't forget|never forget|save.*memory|keep in mind|note that|my preference|always respond|always call|from now on|forget|remove memory|delete memory)\b/.test(
+    /\b(remember|memorize|don't forget|never forget|save.*memory|keep in mind|my preference|always respond|always call|from now on|forget|remove memory|delete memory)\b/.test(
       text
     )
   ) {
@@ -312,11 +328,16 @@ function selectToolsForMessages(
     picked.add('forget_memory');
   }
 
-  if (/\b(check off|tick off|uncheck|reset checklist|checklist|criteria)\b/.test(text)) {
+  if (
+    !isAnalyticalQuestion &&
+    /\b(check off|tick off|uncheck|reset checklist|checklist)\b/.test(text)
+  ) {
     picked.add('update_playbook_checks');
   }
 
   if (
+    !isAnalyticalQuestion &&
+    /\b(set|change|switch|use)\b/.test(text) &&
     /\b(unit|units|currency|dollar|dollars|euro|pound|percent|percentage|r-multiple|r multiple|switch to \$|switch to %)\b/.test(
       text
     )
@@ -346,15 +367,20 @@ function shouldUseWebSearch(messages: IncomingMessage[], explicitWebSearch?: boo
   const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.text || '';
   const text = lastUser.trim().toLowerCase();
   if (!text) return false;
-  const asksRealtimeWeb =
-    /\b(today|latest|current|now|this week|news|headline|cpi|nfp|fomc|fed|ecb|boe|boj|rate decision|yield|dxy|spot price|live price|search|look up|online|web|forecast|economic calendar|tomorrow)\b/.test(
+
+  const asksRealtimeMarketOrWeb =
+    /\b(news|headline|headlines|cpi|nfp|non-?farm|pce|gdp|fomc|fed\b|powell|ecb|boe|boj|rate decision|interest rate|treasury yields?|bond yields?|dxy|spot price|live price|current price|forecast|economic calendar|catalyst|search the web|look up online|check online|web search)\b/.test(
       text
     );
-  if (!asksRealtimeWeb) return false;
+  if (!asksRealtimeMarketOrWeb) return false;
+
   const purePersonalJournalQuery =
-    /\b(my trades|my journal|my win rate|my pnl|log a trade|log this trade|open analytics|open journal)\b/.test(
+    /\b(my trades|my journal|my win rate|my pnl|my stats|my drawdown|my equity|my sessions?|my setups?|my models?|how did i trade|log a trade|log this trade|open analytics|open journal)\b/.test(
       text
-    ) && !/\b(news|cpi|nfp|fomc|fed|ecb|boe|boj|headline|calendar|search|web|online|spot price|live price)\b/.test(text);
+    ) &&
+    !/\b(news|cpi|nfp|pce|fomc|fed\b|ecb|boe|boj|headline|calendar|search the web|look up online|spot price|live price|current price|forecast)\b/.test(
+      text
+    );
   return !purePersonalJournalQuery;
 }
 
@@ -404,18 +430,19 @@ function buildSystemInstruction(
   const isDeep = Boolean(options?.isDeep);
   const hasTools = Boolean(options?.hasTools);
   const hasWebSearch = Boolean(options?.hasWebSearch);
+  const utcNow = new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
   return [
-    `You are KAIROS — flagship quantitative trading analyst & multi-domain intelligence for MSL Journal.`,
+    `You are KAIROS — senior quantitative trading analyst, execution coach, and multi-domain technical intelligence inside MSL Journal (Current server time: ${utcNow}).`,
     isDeep
-      ? '- Lead immediately with the highest-leverage verdict in sentence 1 (zero preamble), then deliver crisp, institutional-grade quantitative breakdowns, tables, edge/leak diagnostics, or clean code.'
-      : '- Lead immediately with the direct answer in the very first words—zero filler, zero throat-clearing. Keep replies ultra-crisp (1–4 tight sentences or compact bullets) unless detail/code/audit is requested.',
-    '- Ground all trade IDs, PnL, units (R, %, money, value), missed trades, win rate, Pair/Model/Direction edge, Post-Loss Tilt, Weekday bias, and Matched Trades strictly in the Snapshot (Missed trades are excluded from realized PnL).',
-    '- On charts: deliver Market Structure & Bias, Key Liquidity / POI Levels, Invalidation, and Asymmetric R:R Verdict concisely.',
+      ? '- Lead immediately with the decisive verdict in sentence 1 (zero fluff or preamble), then deliver rigorous quantitative diagnosis, structured tables/bullets, causal edge vs leak attribution, small-sample caveats (<5 trades), concrete execution rules, or clean production code.'
+      : '- Lead immediately with the direct verdict or answer in the very first sentence (zero throat-clearing, never ask the user to upload trades when Snapshot data is present). Adapt depth to complexity: 1–3 crisp sentences for simple lookups; structured insight with root cause + concrete next adjustment for coaching, diagnostics, strategy, charts, or code.',
+    '- Ground all journal claims strictly in the Snapshot (Missed trades are excluded from realized PnL): cite exact metrics (Net PnL, WR%, Payoff Ratio, Expectancy, Profit Factor, MaxDD, Streaks, Pair/Session/Model combos, Risk Creep, Post-Loss Tilt, Weekday bias, and Trade IDs). If the active journal has 0 trades, state that clearly and offer to log a trade or analyze a chart/strategy.',
+    '- On charts: deliver Market Structure & Bias, Key Liquidity / POI Levels, Clear Invalidation, Trigger Confirmation, and Asymmetric R:R Verdict.',
     hasWebSearch
-      ? '- Live web grounding is active: use fresh verified data for macro catalysts, rates, headlines, and market structure without inventing numbers.'
+      ? '- Live web grounding is active: prioritize verified fresh macro releases, central bank stance, yields, and headlines without inventing numbers.'
       : '',
     hasTools
-      ? '- Call app tools only when requested, and include your brief confirmation text in the same turn.'
+      ? '- Call app tools only when explicitly requested, and include clear confirmation text in the same turn.'
       : '',
     journalContext
       ? `--- SNAPSHOT ---\n${journalContext}\n--- END ---`
@@ -983,23 +1010,31 @@ async function startServer() {
     const speakSync = Boolean(body?.speakSync);
     const activeTools = selectToolsForMessages(messages);
     const hasTools = Boolean(activeTools);
-    const useWebSearch = shouldUseWebSearch(messages, body?.webSearch);
-    const combinedTools: Array<{ googleSearch?: Record<string, never>; functionDeclarations?: FunctionDeclaration[] }> | undefined =
-      useWebSearch || activeTools
-        ? [
-            ...(useWebSearch ? [{ googleSearch: {} }] : []),
-            ...(activeTools || []),
-          ]
-        : undefined;
-    const useHybridToolConfig = Boolean(useWebSearch && activeTools);
+    const explicitWebSearch = Boolean(body?.webSearch);
+    const useWebSearch = shouldUseWebSearch(messages, explicitWebSearch);
+    const buildToolsConfig = (withSearch: boolean) => {
+      const toolsList: Array<{ googleSearch?: Record<string, never>; functionDeclarations?: FunctionDeclaration[] }> = [
+        ...(withSearch ? [{ googleSearch: {} }] : []),
+        ...(activeTools || []),
+      ];
+      return {
+        tools: toolsList.length > 0 ? toolsList : undefined,
+        useHybrid: Boolean(withSearch && activeTools),
+      };
+    };
     const systemInstruction = buildSystemInstruction(body?.journalContext, {
       isDeep,
       hasTools,
       hasWebSearch: useWebSearch,
     });
+    const noSearchSystemInstruction = buildSystemInstruction(body?.journalContext, {
+      isDeep,
+      hasTools,
+      hasWebSearch: false,
+    });
     const compactSystemInstruction = buildSystemInstruction(
-      body?.journalContext ? body.journalContext.slice(0, 1100) : undefined,
-      { isDeep: false, hasTools, hasWebSearch: useWebSearch }
+      body?.journalContext ? body.journalContext.slice(0, 1600) : undefined,
+      { isDeep, hasTools, hasWebSearch: false }
     );
 
     const buildContents = (
@@ -1180,10 +1215,9 @@ async function startServer() {
     };
 
     const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')?.text || '';
-    const isComplexPrompt =
+    const isVisionOrHeavyCode =
       hasRecentImages ||
-      lastUserMsg.length > 220 ||
-      /\b(audit|analy[sz]e|breakdown|compare|explain|why|strategy|playbook|code|script|pine|mql|python|typescript|tilt|drawdown|edge|leak|stress[- ]?test|chart|liquidity|invalidat)\b/i.test(
+      /\b(pine\s*script|mql[45]?|python|typescript|javascript|code|script|function|algorithm|regex|sql|liquidity|order\s*block|fvg|poi|chart|screenshot)\b/i.test(
         lastUserMsg
       );
 
@@ -1197,36 +1231,37 @@ async function startServer() {
           {
             model: FAST_MODEL_NAME,
             level: ThinkingLevel.LOW,
-            timeoutMs: hasRecentImages ? 11000 : 8000,
+            timeoutMs: hasRecentImages ? 10000 : 7000,
           },
         ]
-      : isComplexPrompt
+      : isVisionOrHeavyCode
       ? [
           {
             model: HYDROGEN_MODEL_NAME,
             level: ThinkingLevel.LOW,
-            timeoutMs: hasRecentImages ? 11000 : 7000,
+            timeoutMs: hasRecentImages ? 10500 : 6200,
           },
           {
             model: FAST_MODEL_NAME,
             level: ThinkingLevel.MINIMAL,
-            timeoutMs: hasRecentImages ? 8500 : 5000,
+            timeoutMs: hasRecentImages ? 8000 : 4500,
           },
         ]
       : [
           {
             model: FAST_MODEL_NAME,
             level: ThinkingLevel.MINIMAL,
-            timeoutMs: hasRecentImages ? 8500 : 4500,
+            timeoutMs: 4200,
           },
           {
             model: HYDROGEN_MODEL_NAME,
             level: ThinkingLevel.LOW,
-            timeoutMs: hasRecentImages ? 10500 : 7500,
+            timeoutMs: 6500,
           },
         ];
 
-    const retryBackoffs = [0, 50, 150];
+    const retryBackoffs = [0, 30, 100];
+    let allowWebSearchThisRequest = useWebSearch;
 
     try {
       let activeModel = baseCandidates[0].model;
@@ -1243,7 +1278,7 @@ async function startServer() {
 
         if (pass > 0) {
           const parsedDelay = parseRetryDelayMs(lastErr);
-          const waitMs = Math.min(2000, (parsedDelay || retryBackoffs[pass]) + Math.floor(Math.random() * 90));
+          const waitMs = Math.min(1200, (parsedDelay || retryBackoffs[pass]) + Math.floor(Math.random() * 60));
           sendEvent({
             type: 'status',
             status: pass === 1 ? 'Switching to fastest lane…' : 'Connecting…',
@@ -1254,7 +1289,6 @@ async function startServer() {
 
         const orderedCandidates = orderByHealth(baseCandidates);
         const passContents = pass === 0 ? contents : compactContents;
-        const passInstruction = pass <= 1 ? systemInstruction : compactSystemInstruction;
 
         for (const candidate of orderedCandidates) {
           if (res.writableEnded || clientClosed) break;
@@ -1262,6 +1296,13 @@ async function startServer() {
           let candidateStreamed = '';
           const candidateCalls: FunctionCall[] = [];
           const candidateParts: Part[] = [];
+          const { tools: passTools, useHybrid: passUseHybrid } = buildToolsConfig(allowWebSearchThisRequest);
+          const passInstruction =
+            pass >= 2 && !isDeep
+              ? compactSystemInstruction
+              : allowWebSearchThisRequest
+              ? systemInstruction
+              : noSearchSystemInstruction;
 
           let slowHintTimer: NodeJS.Timeout | undefined;
           try {
@@ -1276,7 +1317,7 @@ async function startServer() {
                     : 'Analyzing context…',
                 });
               }
-            }, 1350);
+            }, 850);
 
             const stream1 = await withTimeout(
               ai.models.generateContentStream({
@@ -1285,10 +1326,10 @@ async function startServer() {
                 config: {
                   systemInstruction: passInstruction,
                   thinkingConfig: {
-                    thinkingLevel: pass >= 2 ? ThinkingLevel.LOW : candidate.level,
+                    thinkingLevel: pass >= 2 && !isDeep ? ThinkingLevel.LOW : candidate.level,
                   },
-                  ...(combinedTools ? { tools: combinedTools } : {}),
-                  ...(useHybridToolConfig
+                  ...(passTools ? { tools: passTools } : {}),
+                  ...(passUseHybrid
                     ? { toolConfig: { includeServerSideToolInvocations: true } }
                     : {}),
                 },
@@ -1376,7 +1417,12 @@ async function startServer() {
             }
             lastErr = err;
             if (!candidateStreamed && candidateCalls.length === 0 && isRetryableModelError(err)) {
-              markModelCooldown(candidate.model, err);
+              // If auto-inferred or search-grounded request hit quota/error, drop search immediately instead of poisoning base model cooldown
+              if (allowWebSearchThisRequest) {
+                allowWebSearchThisRequest = false;
+              } else {
+                markModelCooldown(candidate.model, err);
+              }
               continue;
             }
             if (candidateStreamed || candidateCalls.length > 0) {
@@ -1468,17 +1514,14 @@ async function startServer() {
                 },
               ];
 
-              const turn2Level =
-                activeModel === HYDROGEN_MODEL_NAME ? ThinkingLevel.LOW : ThinkingLevel.MINIMAL;
-
               const stream2 = await withTimeout(
                 ai.models.generateContentStream({
                   model: activeModel,
                   contents: turn2Contents,
                   config: {
-                    systemInstruction: compactSystemInstruction,
+                    systemInstruction: noSearchSystemInstruction,
                     thinkingConfig: {
-                      thinkingLevel: turn2Level,
+                      thinkingLevel: ThinkingLevel.LOW,
                     },
                   },
                 }),
