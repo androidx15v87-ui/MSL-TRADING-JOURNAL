@@ -389,6 +389,7 @@ function getAiClient(apiVersion?: 'v1alpha'): GoogleGenAI | null {
     process.env.GEMINI_API_KEY ||
     process.env.API_KEY ||
     process.env.GOOGLE_API_KEY ||
+    process.env.NEXT_PUBLIC_GEMINI_API_KEY ||
     ''
   ).trim();
   const apiKey = rawKey && rawKey !== 'MY_GEMINI_API_KEY' ? rawKey : '';

@@ -66,7 +66,36 @@ export function handleFirestoreError(
 }
 
 export function formatCloudErrorMessage(err: unknown): string {
+  const code =
+    typeof err === 'object' && err !== null && 'code' in err
+      ? String((err as { code?: unknown }).code || '')
+      : '';
   const raw = err instanceof Error ? err.message : String(err || 'Cloud sync failed.');
+  const combined = `${code} ${raw}`;
+
+  if (code === 'auth/unauthorized-domain' || combined.includes('auth/unauthorized-domain')) {
+    const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
+    return `Google Sign-In is blocked for "${host}". Add "${host}" under Firebase Console → Authentication → Settings → Authorized domains, or sign in on the Development URL.`;
+  }
+  if (code === 'auth/popup-blocked' || combined.includes('auth/popup-blocked')) {
+    return 'Google Sign-In pop-up was blocked. Allow pop-ups for this site or open the app in a normal Chrome/Safari tab to sign in.';
+  }
+  if (code === 'auth/operation-not-allowed' || combined.includes('auth/operation-not-allowed')) {
+    return 'Google Sign-In is disabled in Firebase Authentication. Enable the Google provider in Firebase Console → Authentication → Sign-in method.';
+  }
+  if (code === 'auth/operation-not-supported-in-this-environment' || combined.includes('operation-not-supported-in-this-environment')) {
+    return 'Sign-in pop-up is unsupported in this embedded/web view. Open the app directly in Chrome or Safari to sign in.';
+  }
+  if (code === 'auth/web-storage-unsupported' || combined.includes('web-storage-unsupported')) {
+    return 'Browser cookies/storage blocked sign-in. Enable cookies for this site or open in Chrome/Safari.';
+  }
+  if (code === 'auth/network-request-failed' || combined.includes('auth/network-request-failed')) {
+    return 'Network error reaching Google authentication. Check your internet connection and retry.';
+  }
+  if (code.startsWith('auth/')) {
+    return `Google Sign-In failed (${code.replace('auth/', '')}). Try opening in a standard browser tab.`;
+  }
+
   if (raw.includes("Free daily read units per project")) {
     return `Firestore daily read quota reached. Upgrade or inspect usage at https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/firestore/databases/${FIRESTORE_DATABASE_ID}/data?openUpgradeDialog=true`;
   }
